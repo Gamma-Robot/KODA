@@ -1,0 +1,33 @@
+[project]
+name = "sil-tts-workspace"
+version = "0.1.0"
+description = "Test-time scaling for pretrained G1 whole-body trackers in the MJWarp world"
+requires-python = ">=3.10"
+dependencies = ["sil-planners", "sil-trackers", "sil-tts"]
+
+[project.optional-dependencies]
+scalebfm = ["sil-trackers[scalebfm]", "sil-tts[scalebfm]"]
+
+[dependency-groups]
+dev = ["pytest>=8", "pyarrow>=15"]
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["src/sil_planners", "src/sil_trackers", "src/sil_tts"]
+
+[tool.uv.sources]
+sil-planners = { workspace = true }
+sil-trackers = { workspace = true }
+sil-tts = { workspace = true }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+junit_family = "xunit1"
+markers = [
+    "gpu: requires a CUDA device",
+    "conformance: tolerance-gated qualification tests",
+    "performance: fixed-workload relative throughput qualification",
+    "soak: long-running resource-stability qualification",
+]

@@ -1,0 +1,6 @@
+ref: experiments/sonic_jump_full.yaml
+
+name: sonic_jump_terminal_off
+motion_tracking:
+  terminal_joint_position_weight: 0.0
+  terminal_body_position_weight: 0.0

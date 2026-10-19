@@ -1,0 +1,7 @@
+ref: experiments/sonic_jump_full.yaml
+
+name: sonic_jump_deformation_off
+motion_tracking:
+  deformation_joint_position_weight: 0.0
+  deformation_body_position_weight: 0.0
+  deformation_body_orientation_weight: 0.0

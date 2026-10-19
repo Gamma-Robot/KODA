@@ -1,0 +1,8 @@
+ref: experiments/cross_tracker_low_budget.base.yaml
+
+name: wxy_jump_qualification
+tracker:
+  ref: trackers/wxy_wbc.yaml
+target:
+  motion_id: jump
+  clip_duration_seconds: 0.4

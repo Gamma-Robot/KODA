@@ -1,0 +1,196 @@
+#!/usr/bin/env bash
+# Batch template-palm + RGB-D joint-contact reference, torso+wrist JAX
+# CEM-MPC, then Mink.  Tracking remains 29-DoF G1; the synchronized 14-DoF
+# Dex3 trajectory is carried in hand_qpos/hand_qvel in the same archive.
+# This is the standalone tracking entry point.  The formal View Change batch
+# now prepares its raw template-palm/contact bundle without using this script
+# as a tracking bootstrap, then runs one final tracking pass.
+#
+# Each completed session contains only:
+#   kinematics.npz
+#   meta.json
+#   tracking_error.json
+#
+# Default input:
+#   data/egocentric_data/pick_up_the_cup_smooth
+# Default output:
+#   data/kinematics/pick_up_the_cup_smooth
+# Reference and tracking policy:
+#   1. Prepare the complete source sequence on the measured 50 Hz timeline.
+#   2. Build each wrist SE(3) reference with template_palm_kabsch from the
+#      wrist plus four non-thumb MCP landmarks in annotation.hdf5.
+#   3. Position-retarget both Dex3 hands on the same 50 Hz timeline.
+#   4. Detect contact from source RGB-D and jointly optimize right wrist-link
+#      SE(3) plus right Dex3 7-DoF.
+#   5. Edge-hold the first/per-frame/last optimized wrist residual and inject
+#      it before building the torso + dual-wrist three-point reference.
+#   6. Repair bounded jump-out-and-return wrist SE(3) excursions, then apply
+#      timestamp-aware Savitzky-Golay smoothing to the torso and both wrist
+#      tracks.  The smoothed reference and wrist targets are the
+#      sole inputs to all downstream tracking stages.
+#   7. Run Kimodo initialization, JAX CEM-MPC ScaleTrack, and Mink against the
+#      smoothed reference.  No post-Mink wrist correction is allowed.
+#   8. Publish the 29-DoF G1 trajectory together with the paired 14-DoF Dex3
+#      hand_qpos/hand_qvel and contact provenance in kinematics.npz.
+#
+# Examples:
+#   ./pipeline_initandtracking_3point_batch.txt
+#   GPUS=1,6,7,8 ./pipeline_initandtracking_3point_batch.txt
+#   DRY_RUN=1 ./pipeline_initandtracking_3point_batch.txt
+#   LIMIT=1 GPUS=1 ./pipeline_initandtracking_3point_batch.txt
+#   SESSION_LIST=/path/to/session_ids.txt STATE_FILE=/path/to/state.json \
+#     FORCE=1 GPUS=1,8 ./pipeline_initandtracking_3point_batch.txt
+#   Q0_ZERO_ARM_NO_SMOOTHNESS=1 Q0_SHOULDER_CLEARANCE=1 \
+#     Q0_SHOULDER_CLEARANCE_COST=5 GPUS=1 \
+#     ./pipeline_initandtracking_3point_batch.txt
+
+set -euo pipefail
+
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PYTHON="${KODA_PYTHON:-${PYTHON:-python3}}"
+DRIVER="$PROJECT_ROOT/scripts/run_three_point_batch.py"
+VALIDATOR="$PROJECT_ROOT/scripts/validate_pipeline_layout.py"
+
+"$PYTHON" "$VALIDATOR" >/dev/null
+
+INPUT_ROOT=${INPUT_ROOT:-$PROJECT_ROOT/data/egocentric_data/pick_up_the_cup_smooth}
+OUTPUT_ROOT=${OUTPUT_ROOT:-$PROJECT_ROOT/data/kinematics/pick_up_the_cup_smooth}
+WORK_ROOT=${WORK_ROOT:-$PROJECT_ROOT/.cache/three_point_joint_contact}
+GPUS=${GPUS:-auto}
+MIN_FREE_GPU_MB=${MIN_FREE_GPU_MB:-18000}
+MAX_GPU_UTILIZATION=${MAX_GPU_UTILIZATION:-10}
+CPU_THREADS_PER_WORKER=${CPU_THREADS_PER_WORKER:-4}
+STAGE_TIMEOUT_S=${STAGE_TIMEOUT_S:-0}
+JOINT_CONTACT_PRECOMPUTE=${JOINT_CONTACT_PRECOMPUTE:-1}
+CONTACT_TRANSITION_FRAMES=${CONTACT_TRANSITION_FRAMES:-15}
+WRIST_REFERENCE_WORLD_Z_OFFSET_M=${WRIST_REFERENCE_WORLD_Z_OFFSET_M:-0}
+REFERENCE_SAVGOL_WINDOW=${REFERENCE_SAVGOL_WINDOW:-5}
+REFERENCE_SAVGOL_POLYORDER=${REFERENCE_SAVGOL_POLYORDER:-2}
+REFERENCE_SAVGOL_GAP_FACTOR=${REFERENCE_SAVGOL_GAP_FACTOR:-3.0}
+REFERENCE_WRIST_OUTLIER_MAX_DURATION_S=${REFERENCE_WRIST_OUTLIER_MAX_DURATION_S:-1.1}
+REFERENCE_WRIST_OUTLIER_POSITION_FLOOR_M=${REFERENCE_WRIST_OUTLIER_POSITION_FLOOR_M:-0.05}
+REFERENCE_WRIST_OUTLIER_ORIENTATION_FLOOR_DEG=${REFERENCE_WRIST_OUTLIER_ORIENTATION_FLOOR_DEG:-45.0}
+Q0_ZERO_ARM_NO_SMOOTHNESS=${Q0_ZERO_ARM_NO_SMOOTHNESS:-1}
+Q0_SHOULDER_CLEARANCE=${Q0_SHOULDER_CLEARANCE:-1}
+Q0_SHOULDER_CLEARANCE_COST=${Q0_SHOULDER_CLEARANCE_COST:-5}
+Q0_SHOULDER_CLEARANCE_THRESHOLD=${Q0_SHOULDER_CLEARANCE_THRESHOLD:-0.06}
+Q0_MIN_SHOULDER_CLEARANCE=${Q0_MIN_SHOULDER_CLEARANCE:-0.01}
+
+args=(
+  --input-root "$INPUT_ROOT"
+  --output-root "$OUTPUT_ROOT"
+  --work-root "$WORK_ROOT"
+  --gpus "$GPUS"
+  --min-free-gpu-mb "$MIN_FREE_GPU_MB"
+  --max-gpu-utilization "$MAX_GPU_UTILIZATION"
+  --cpu-threads-per-worker "$CPU_THREADS_PER_WORKER"
+  --stage-timeout-s "$STAGE_TIMEOUT_S"
+  --wrist-reference-world-z-offset-m "$WRIST_REFERENCE_WORLD_Z_OFFSET_M"
+)
+
+if [[ -n "${WORKERS:-}" ]]; then
+  args+=(--workers "$WORKERS")
+fi
+if [[ -n "${SESSION_PATTERN:-}" ]]; then
+  args+=(--session-pattern "$SESSION_PATTERN")
+fi
+if [[ -n "${SESSION_LIST:-}" ]]; then
+  args+=(--session-list "$SESSION_LIST")
+fi
+if [[ -n "${LIMIT:-}" ]]; then
+  args+=(--limit "$LIMIT")
+fi
+if [[ "${FORCE:-0}" == "1" ]]; then
+  args+=(--force)
+fi
+if [[ "${KEEP_WORK:-0}" == "1" ]]; then
+  args+=(--keep-work)
+fi
+if [[ "${REBUILD_ARTIFACT:-0}" == "1" ]]; then
+  args+=(--rebuild-artifact)
+fi
+if [[ "${DRY_RUN:-0}" == "1" ]]; then
+  args+=(--dry-run)
+fi
+if [[ -n "${STATE_FILE:-}" ]]; then
+  args+=(--state-file "$STATE_FILE")
+fi
+if [[ -n "${ORIENTATION_OFFSET_ROOT:-}" ]]; then
+  args+=(--orientation-offset-root "$ORIENTATION_OFFSET_ROOT")
+fi
+if [[ "$JOINT_CONTACT_PRECOMPUTE" == "1" ]]; then
+  if [[ -n "${CONTACT_AWARE_ROOT:-}" ]]; then
+    echo "CONTACT_AWARE_ROOT is incompatible with JOINT_CONTACT_PRECOMPUTE=1" >&2
+    exit 2
+  fi
+  args+=(--joint-contact-precompute)
+  args+=(--contact-transition-frames "$CONTACT_TRANSITION_FRAMES")
+  args+=(--contact-edge-hold)
+elif [[ -n "${CONTACT_AWARE_ROOT:-}" ]]; then
+  args+=(--contact-aware-root "$CONTACT_AWARE_ROOT")
+  args+=(--contact-transition-frames "$CONTACT_TRANSITION_FRAMES")
+  # Strict causal contact policy: first-contact residual before contact,
+  # per-frame residual during contact, last-contact residual afterward.
+  if [[ "${CONTACT_EDGE_HOLD:-1}" == "1" ]]; then
+    args+=(--contact-edge-hold)
+  fi
+  if [[ -n "${CONTACT_SCHEDULE_ROOT:-}" ]]; then
+    args+=(--contact-schedule-root "$CONTACT_SCHEDULE_ROOT")
+  fi
+fi
+
+# Smooth the completed torso + dual-wrist reference after contact residual
+# injection.  These outputs replace the raw reference/targets for Kimodo,
+# ScaleTrack, Mink, and final tracking-error evaluation.
+args+=(--reference-savgol-window "$REFERENCE_SAVGOL_WINDOW")
+args+=(--reference-savgol-polyorder "$REFERENCE_SAVGOL_POLYORDER")
+args+=(--reference-savgol-gap-factor "$REFERENCE_SAVGOL_GAP_FACTOR")
+args+=(--reference-wrist-outlier-max-duration-s "$REFERENCE_WRIST_OUTLIER_MAX_DURATION_S")
+args+=(--reference-wrist-outlier-position-floor-m "$REFERENCE_WRIST_OUTLIER_POSITION_FLOOR_M")
+args+=(--reference-wrist-outlier-orientation-floor-deg "$REFERENCE_WRIST_OUTLIER_ORIENTATION_FLOOR_DEG")
+
+# Optional frame-0 initialization branch.  These settings affect only the
+# first Mink solve; frames >=1 retain the existing warm-start and smoothness
+# constraints.  A positive clearance cost or the clearance diagnostic flag
+# automatically selects the q0 branch in the Python runner.
+if [[ "$Q0_ZERO_ARM_NO_SMOOTHNESS" == "1" ]]; then
+  args+=(--q0-zero-arm-no-smoothness)
+fi
+if [[ "$Q0_SHOULDER_CLEARANCE" == "1" ]]; then
+  args+=(--q0-shoulder-clearance)
+fi
+if [[ -n "${Q0_MAX_ARM_DELTA:-}" ]]; then
+  args+=(--q0-max-arm-delta "$Q0_MAX_ARM_DELTA")
+fi
+if [[ -n "${Q0_ARM_VELOCITY_LIMIT:-}" ]]; then
+  args+=(--q0-arm-velocity-limit "$Q0_ARM_VELOCITY_LIMIT")
+fi
+if [[ -n "${Q0_POSTURE_COST:-}" ]]; then
+  args+=(--q0-posture-cost "$Q0_POSTURE_COST")
+fi
+if [[ -n "${Q0_ORIENTATION_COST:-}" ]]; then
+  args+=(--q0-orientation-cost "$Q0_ORIENTATION_COST")
+fi
+if [[ -n "${Q0_COLLISION_MARGIN:-}" ]]; then
+  args+=(--q0-collision-margin "$Q0_COLLISION_MARGIN")
+fi
+if [[ -n "${Q0_SHOULDER_CLEARANCE_COST:-}" ]]; then
+  args+=(--q0-shoulder-clearance-cost "$Q0_SHOULDER_CLEARANCE_COST")
+fi
+if [[ -n "${Q0_SHOULDER_CLEARANCE_THRESHOLD:-}" ]]; then
+  args+=(--q0-shoulder-clearance-threshold "$Q0_SHOULDER_CLEARANCE_THRESHOLD")
+fi
+if [[ -n "${Q0_SHOULDER_CLEARANCE_SAMPLE_START:-}" ]]; then
+  args+=(--q0-shoulder-clearance-sample-start "$Q0_SHOULDER_CLEARANCE_SAMPLE_START")
+fi
+if [[ -n "${Q0_SHOULDER_CLEARANCE_SAMPLE_COUNT:-}" ]]; then
+  args+=(--q0-shoulder-clearance-sample-count "$Q0_SHOULDER_CLEARANCE_SAMPLE_COUNT")
+fi
+if [[ "${Q0_OPEN_BRANCH_FALLBACK:-0}" == "1" ]]; then
+  args+=(--q0-open-branch-fallback)
+fi
+if [[ -n "${Q0_MIN_SHOULDER_CLEARANCE:-}" ]]; then
+  args+=(--q0-min-shoulder-clearance "$Q0_MIN_SHOULDER_CLEARANCE")
+fi
+
+exec "$PYTHON" "$DRIVER" "${args[@]}"

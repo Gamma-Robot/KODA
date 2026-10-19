@@ -1,0 +1,23 @@
+ref: experiments/wxy_smoke.yaml
+
+name: wxy_robust_qualification
+
+planning:
+  max_worlds: 20
+
+robustness:
+  enabled: true
+  num_scenarios: 4
+  scenario_seed: 1313
+  risk: mean
+  ranges:
+    contact_friction_scale: [0.8, 1.2]
+    joint_armature_scale: [0.8, 1.2]
+    joint_frictionloss_scale: [0.8, 1.2]
+    actuation_strength_scale: [0.9, 1.1]
+    root_linear_velocity_std: 0.02
+    root_angular_velocity_std: 0.05
+    joint_velocity_std: 0.05
+
+visualization:
+  enabled: false

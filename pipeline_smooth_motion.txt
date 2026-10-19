@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# Smooth the dual-wrist reference, then regenerate three-point JAX MPC + Mink
+# kinematics for all sessions. The smoothing stage is rerun-safe: completed
+# sessions are detected through wrist_smoothing.json and are not filtered twice.
+#
+# Final per-session output:
+#   kinematics.npz
+#   meta.json
+#   tracking_error.json
+#
+# Run:
+#   $KODA_HOME/pipeline_smooth_motion.txt
+#
+# Optional overrides:
+#   GPUS=1,2,3,4,5,8 WORKERS=6 \
+#     $KODA_HOME/pipeline_smooth_motion.txt
+#   SESSION_LIST=/path/to/session_ids.txt GPUS=1,8 WORKERS=2 \
+#     $KODA_HOME/pipeline_smooth_motion.txt
+
+set -euo pipefail
+
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PYTHON="${KODA_PYTHON:-${PYTHON:-python3}}"
+SMOOTHER="$PROJECT_ROOT/scripts/smooth_wrist_reference.py"
+BATCH_PIPELINE="$PROJECT_ROOT/pipeline_initandtracking_3point_batch.txt"
+VALIDATOR="$PROJECT_ROOT/scripts/validate_pipeline_layout.py"
+
+"$PYTHON" "$VALIDATOR" >/dev/null
+
+INPUT_ROOT=${INPUT_ROOT:-$PROJECT_ROOT/data/egocentric_data/pick_up_the_cup_smooth}
+OUTPUT_ROOT=${OUTPUT_ROOT:-$PROJECT_ROOT/data/kinematics/pick_up_the_cup_smooth}
+WORK_ROOT=${WORK_ROOT:-$PROJECT_ROOT/.cache/torso_umi3_smooth_batch}
+GPUS=${GPUS:-1,2,3,4,5,8}
+WORKERS=${WORKERS:-6}
+CPU_THREADS_PER_WORKER=${CPU_THREADS_PER_WORKER:-4}
+STAGE_TIMEOUT_S=${STAGE_TIMEOUT_S:-0}
+
+mkdir -p "$OUTPUT_ROOT/_pipeline_logs" "$WORK_ROOT"
+LOG_FILE=${LOG_FILE:-$OUTPUT_ROOT/_pipeline_logs/pipeline_$(date +%Y%m%d_%H%M%S).log}
+exec > >(tee -a "$LOG_FILE") 2>&1
+
+selected_sessions=()
+if [[ -n "${SESSION_LIST:-}" ]]; then
+  [[ -f "$SESSION_LIST" ]] || {
+    echo "missing SESSION_LIST: $SESSION_LIST" >&2
+    exit 2
+  }
+  mapfile -t selected_sessions < <(
+    sed -e 's/#.*$//' -e '/^[[:space:]]*$/d' "$SESSION_LIST"
+  )
+elif [[ -n "${LIMIT:-}" ]]; then
+  [[ "$LIMIT" =~ ^[1-9][0-9]*$ ]] || {
+    echo "LIMIT must be a positive integer, got $LIMIT" >&2
+    exit 2
+  }
+  mapfile -t selected_sessions < <(
+    find "$INPUT_ROOT" -mindepth 1 -maxdepth 1 -type d \
+      -name 'session_*' -printf '%f\n' | sort | head -n "$LIMIT"
+  )
+fi
+
+smoother_args=(--input-root "$INPUT_ROOT")
+if [[ "${DRY_RUN:-0}" == "1" ]]; then
+  smoother_args+=(--dry-run)
+else
+  smoother_args+=(--in-place)
+fi
+if [[ "${FORCE_SMOOTHING:-0}" == "1" ]]; then
+  smoother_args+=(--force)
+fi
+if [[ "${#selected_sessions[@]}" -gt 0 ]]; then
+  smoother_args+=(--sessions "${selected_sessions[@]}")
+  TRACKING_SESSION_LIST="$WORK_ROOT/selected_sessions.txt"
+  printf '%s\n' "${selected_sessions[@]}" > "$TRACKING_SESSION_LIST"
+else
+  TRACKING_SESSION_LIST=""
+fi
+
+echo "[$(date --iso-8601=seconds)] verifying/applying wrist smoothing"
+set +e
+"$PYTHON" "$SMOOTHER" "${smoother_args[@]}"
+smoothing_rc=$?
+set -e
+if [[ "$smoothing_rc" -eq 2 && "${ALLOW_SMOOTHING_REVIEW:-0}" == "1" ]]; then
+  echo "[$(date --iso-8601=seconds)] smoothing quality=review; explicitly continuing"
+elif [[ "$smoothing_rc" -ne 0 ]]; then
+  exit "$smoothing_rc"
+fi
+
+echo "[$(date --iso-8601=seconds)] starting three-point JAX MPC + Mink batch"
+echo "input=$INPUT_ROOT"
+echo "output=$OUTPUT_ROOT"
+echo "gpus=$GPUS workers=$WORKERS"
+
+INPUT_ROOT="$INPUT_ROOT" \
+OUTPUT_ROOT="$OUTPUT_ROOT" \
+WORK_ROOT="$WORK_ROOT" \
+GPUS="$GPUS" \
+WORKERS="$WORKERS" \
+CPU_THREADS_PER_WORKER="$CPU_THREADS_PER_WORKER" \
+STAGE_TIMEOUT_S="$STAGE_TIMEOUT_S" \
+DRY_RUN="${DRY_RUN:-0}" \
+LIMIT= \
+SESSION_LIST="$TRACKING_SESSION_LIST" \
+FORCE="${FORCE:-0}" \
+"$BATCH_PIPELINE"
+
+echo "[$(date --iso-8601=seconds)] smooth-motion pipeline completed"

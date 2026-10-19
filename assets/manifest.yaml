@@ -1,0 +1,254 @@
+schema_version: 1
+repository:
+  repo_id: TeleEmbodied/koda-assets
+  repo_type: dataset
+  revision: main
+
+assets:
+  example_session:
+    source: huggingface
+    repo_id: TeleEmbodied/koda-assets
+    repo_type: dataset
+    revision: main
+    path: samples/session_20260926_005030_iphone14_3/session_data_20260926_005030_iphone14_3.mcap
+    target: samples/session_20260926_005030_iphone14_3/session_data_20260926_005030_iphone14_3.mcap
+    sha256: 775ebc75bcdddc88d317da8fed579008b24fd0404efc5382f7ba69e93a97d9af
+    size_bytes: 150478283
+
+  mano_right:
+    source: manual
+    target: models/mano/MANO_RIGHT.pkl
+    official_url: https://mano.is.tue.mpg.de/
+    instructions: >-
+      Register at the official MANO site, accept its license, download the
+      right-hand model, and copy MANO_RIGHT.pkl to
+      assets/models/mano/MANO_RIGHT.pkl. This file is license restricted and
+      is intentionally not mirrored by KODA.
+
+  hawor:
+    source: manual
+    target: models/hawor
+    required:
+      - weights/hawor/checkpoints/hawor.ckpt
+      - weights/hawor/checkpoints/infiller.pt
+      - weights/hawor/model_config.yaml
+      - weights/external/detector.pt
+      - lib/models/hawor.py
+    official_url: https://github.com/ThunderVVV/HaWoR
+    instructions: >-
+      Clone the official HaWoR repository into assets/models/hawor, download
+      detector.pt from
+      https://huggingface.co/spaces/rolpotamias/WiLoR/resolve/main/pretrained_models/detector.pt,
+      download hawor.ckpt, infiller.pt, and model_config.yaml from
+      https://huggingface.co/ThunderVVV/HaWoR, and follow that repository's
+      dependency instructions. KODA_HAWOR_DIR may point to another checkout.
+
+  scalebfm_official:
+    source: huggingface
+    repo_id: WeishuaiZeng/ScaleBFM
+    repo_type: model
+    revision: main
+    path: checkpoint/humanoid_transformer_m/model_22200.pt
+    target: models/scalebfm/model_22200.pt
+    sha256: 88d5a79946c03ed25503f48b2af71d16290844ef066ca9b6c8fa8dc3837422e3
+    official_url: https://huggingface.co/WeishuaiZeng/ScaleBFM
+    instructions: Download the official ScaleBFM checkpoint model_22200.pt.
+
+  depth_anything_3:
+    source: huggingface_snapshot
+    repo_id: depth-anything/DA3METRIC-LARGE
+    repo_type: model
+    revision: main
+    target: models/depth_anything_3
+    allow_patterns:
+      - config.json
+      - "*.json"
+      - "*.safetensors"
+      - "*.py"
+      - "*.txt"
+    required:
+      - config.json
+    official_url: https://huggingface.co/depth-anything/DA3METRIC-LARGE
+    instructions: The snapshot is downloaded by koda assets download.
+
+  diffueraser_base:
+    source: huggingface_snapshot
+    repo_id: stable-diffusion-v1-5/stable-diffusion-v1-5
+    repo_type: model
+    revision: main
+    target: models/diffueraser/weights/stable-diffusion-v1-5
+    allow_patterns:
+      - model_index.json
+      - scheduler/scheduler_config.json
+      - tokenizer/*
+      - text_encoder/config.json
+      - text_encoder/model.safetensors
+      - unet/config.json
+      - unet/diffusion_pytorch_model.safetensors
+      - vae/config.json
+      - vae/diffusion_pytorch_model.safetensors
+    required:
+      - model_index.json
+      - scheduler/scheduler_config.json
+      - tokenizer
+      - text_encoder/config.json
+      - text_encoder/model.safetensors
+      - unet/config.json
+      - unet/diffusion_pytorch_model.safetensors
+      - vae/config.json
+      - vae/diffusion_pytorch_model.safetensors
+
+  diffueraser_vae:
+    source: huggingface_snapshot
+    repo_id: stabilityai/sd-vae-ft-mse
+    repo_type: model
+    revision: main
+    target: models/diffueraser/weights/sd-vae-ft-mse
+    allow_patterns:
+      - config.json
+      - diffusion_pytorch_model.*
+    required:
+      - config.json
+
+  diffueraser_model:
+    source: huggingface_snapshot
+    repo_id: lixiaowen/diffuEraser
+    repo_type: model
+    revision: main
+    target: models/diffueraser/weights/diffuEraser
+    allow_patterns:
+      - model_index.json
+      - brushnet/*
+      - unet_main/*
+      - "*.json"
+      - "*.safetensors"
+      - "*.bin"
+    required:
+      - brushnet
+      - unet_main
+
+  diffueraser_pcm:
+    source: huggingface_snapshot
+    repo_id: wangfuyun/PCM_Weights
+    repo_type: model
+    revision: main
+    target: models/diffueraser/weights/PCM_Weights
+    allow_patterns:
+      - sd15/*
+    required:
+      - sd15
+
+  diffueraser_propainter:
+    source: manual
+    target: models/diffueraser/propainter
+    required:
+      - ProPainter.pth
+      - raft-things.pth
+      - recurrent_flow_completion.pth
+    official_url: https://github.com/sczhou/ProPainter
+    instructions: >-
+      Download the three released ProPainter weights from the official
+      ProPainter repository and copy them to
+      assets/models/diffueraser/propainter.
+
+  efficientsam3:
+    source: huggingface_snapshot
+    repo_id: Simon7108528/EfficientSAM3
+    repo_type: model
+    revision: main
+    target: models/efficientsam3
+    flatten: efficientsam3_ft/efficientsam3_tinyvit.pt
+    allow_patterns:
+      - efficientsam3_ft/efficientsam3_tinyvit.pt
+      - efficientsam3_tinyvit.pt
+    required:
+      - efficientsam3_tinyvit.pt
+    official_url: https://huggingface.co/Simon7108528/EfficientSAM3
+    instructions: The snapshot is downloaded by koda assets download.
+
+  sonic:
+    source: huggingface_snapshot
+    repo_id: nvidia/GEAR-SONIC
+    repo_type: model
+    revision: main
+    target: models/sonic
+    allow_patterns:
+      - low_latency/model_encoder.onnx
+      - low_latency/model_decoder.onnx
+      - low_latency/observation_config.yaml
+    required:
+      - low_latency/model_encoder.onnx
+      - low_latency/model_decoder.onnx
+      - low_latency/observation_config.yaml
+    official_url: https://huggingface.co/nvidia/GEAR-SONIC
+    instructions: The low-latency G1 snapshot is downloaded by koda assets download.
+
+  kimodo:
+    source: huggingface_snapshot
+    repo_id: nvidia/Kimodo-G1-RP-v1
+    repo_type: model
+    revision: main
+    target: models/kimodo/Kimodo-G1-RP-v1
+    allow_patterns:
+      - "*.json"
+      - "*.yaml"
+      - "*.safetensors"
+      - "*.bin"
+      - "*.pt"
+      - "*.pth"
+      - "*.npy"
+      - "*.npz"
+    required:
+      - config.yaml
+    official_url: https://huggingface.co/nvidia/Kimodo-G1-RP-v1
+    instructions: The local Kimodo checkpoint is downloaded by koda assets download.
+
+  kimodo_text_base:
+    source: huggingface_snapshot
+    repo_id: McGill-NLP/LLM2Vec-Meta-Llama-3-8B-Instruct-mntp
+    repo_type: model
+    revision: main
+    target: models/kimodo/text_encoders/McGill-NLP/LLM2Vec-Meta-Llama-3-8B-Instruct-mntp
+    allow_patterns:
+      - "*.json"
+      - "*.safetensors"
+      - "*.bin"
+      - "*.model"
+      - "*.txt"
+    required:
+      - config.json
+
+  kimodo_text_adapter:
+    source: huggingface_snapshot
+    repo_id: McGill-NLP/LLM2Vec-Meta-Llama-3-8B-Instruct-mntp-supervised
+    repo_type: model
+    revision: main
+    target: models/kimodo/text_encoders/McGill-NLP/LLM2Vec-Meta-Llama-3-8B-Instruct-mntp-supervised
+    allow_patterns:
+      - "*.json"
+      - "*.safetensors"
+      - "*.bin"
+      - "adapter_*"
+      - "*.txt"
+    required:
+      - adapter_config.json
+
+profiles:
+  smoke:
+    - example_session
+  full:
+    - example_session
+    - mano_right
+    - hawor
+    - scalebfm_official
+    - depth_anything_3
+    - diffueraser_base
+    - diffueraser_vae
+    - diffueraser_model
+    - diffueraser_pcm
+    - diffueraser_propainter
+    - efficientsam3
+    - sonic
+    - kimodo
+    - kimodo_text_base
+    - kimodo_text_adapter

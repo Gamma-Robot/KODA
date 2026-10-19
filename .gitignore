@@ -1,0 +1,38 @@
+# Runtime session data, kinematics, experiments
+/data/
+.contact_aware_watch_batch/
+
+# Caches and bytecode
+.pytest_cache/
+.ruff_cache/
+**/__pycache__/
+*.py[cod]
+*.so
+
+# Local-only resource links (weights, caches, conda envs — not source)
+resources/data_alignment
+/resources/hf_cache
+/resources/kimodo_models
+/resources/model_dir
+/resources/envs/
+
+# Secrets
+.env
+.env.*
+!.env.example
+*.pem
+id_rsa
+credentials.json
+
+# Local model downloads and generated outputs
+/assets/models/
+/assets/motors/
+/assets/cache/
+/outputs/
+/.cache/
+/vendor_build/
+/release/
+/assets/samples/
+
+# Generated tracking policy artifacts
+src/koda/vendor/hydrax/scripts/pi_mjx_sim2sim/artifacts/*

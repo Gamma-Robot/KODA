@@ -1,0 +1,13 @@
+schema_version: 2
+name: sonic_jump_deformation_off
+experiment_refs:
+  - experiments/sonic_jump_deformation_off.yaml
+clip_duration_seconds: 10.0
+budgets:
+  - {id: n65-i4, num_candidates: 65, num_iterations: 4}
+planner_variants:
+  - id: weighted_elites_low_noise
+    ref: planners/weighted_elites.yaml
+    overrides: {noise_scale: 0.2}
+seeds: [47, 113, 197]
+rollout_batch_ceiling: 33

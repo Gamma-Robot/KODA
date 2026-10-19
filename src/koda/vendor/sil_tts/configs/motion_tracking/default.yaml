@@ -1,0 +1,11 @@
+tracking_joint_position_weight: 1.0
+tracking_joint_velocity_weight: 0.0
+tracking_body_position_weight: 1.0
+tracking_body_orientation_weight: 0.5
+deformation_joint_position_weight: 0.1
+deformation_body_position_weight: 0.1
+deformation_body_orientation_weight: 0.05
+joint_speed_weight: 0.0
+action_rate_l2_weight: 0.1
+terminal_joint_position_weight: 5.0
+terminal_body_position_weight: 5.0

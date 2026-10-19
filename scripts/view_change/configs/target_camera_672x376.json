@@ -1,0 +1,18 @@
+{
+  "name": "target_camera_672x376",
+  "width": 672,
+  "height": 376,
+  "fx": 404.73825,
+  "fy": 402.63467,
+  "cx": 340.288,
+  "cy": 187.62246,
+  "K": [
+    [404.73825, 0.0, 340.288],
+    [0.0, 402.63467, 187.62246],
+    [0.0, 0.0, 1.0]
+  ],
+  "resize_convention": "opencv_pixel_center",
+  "resize_formula": "f_prime=s*f; c_prime=(c+0.5)*s-0.5",
+  "unit": "pixel",
+  "projection_contract": "pinhole target projection; distortion is not applied"
+}

@@ -1,0 +1,15 @@
+schema_version: 1
+robot: g1_dex3
+hand_mode: dex3
+controller: sonic
+assets_profile: full
+stages:
+  conversion: true
+  tracking: true
+  view_change: true
+  export_groot: true
+  finetune: false
+runtime:
+  device: auto
+  workers: 1
+  fps: 30

@@ -1,0 +1,28 @@
+# Vendored from Open-AoE/aoe-reconstruct-retarget/phantom/configs/retarget.
+# The in-tree dex_retargeting fork disambiguates the human-index field per
+# optimizer type, so ``target_link_human_indices`` is spelled
+# ``target_link_human_indices_position`` here.  Everything else is verbatim.
+# Vendored from Open-AoE/aoe-reconstruct-retarget/phantom/configs/retarget.
+# The in-tree dex_retargeting fork disambiguates the human-index field per
+# optimizer type, so ``target_link_human_indices`` is spelled
+# ``target_link_human_indices_position`` here.  Everything else is verbatim.
+retargeting:
+  type: position
+  add_dummy_free_joint: true
+  ignore_mimic_joint: false
+  low_pass_alpha: 1
+  urdf_path: brainco_hand/brainco_hand_right.urdf
+  target_joint_names:
+    - right_thumb_metacarpal_joint
+    - right_thumb_proximal_joint
+    - right_index_proximal_joint
+    - right_middle_proximal_joint
+    - right_ring_proximal_joint
+    - right_pinky_proximal_joint
+  target_link_human_indices_position: [0, 1, 2, 3, 4]
+  target_link_names:
+    - right_thumb_tip
+    - right_index_tip
+    - right_middle_tip
+    - right_ring_tip
+    - right_pinky_tip

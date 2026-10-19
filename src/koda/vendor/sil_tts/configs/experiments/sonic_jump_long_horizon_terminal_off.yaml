@@ -1,0 +1,5 @@
+ref: experiments/sonic_jump_terminal_off.yaml
+
+name: sonic_jump_long_horizon_terminal_off
+planning:
+  horizon_steps: 80

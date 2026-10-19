@@ -1,0 +1,8 @@
+ref: experiments/cross_tracker_low_budget.base.yaml
+
+name: wxy_walk_full
+tracker:
+  ref: trackers/wxy_wbc.yaml
+target:
+  motion_id: walk
+  clip_duration_seconds: 246.62

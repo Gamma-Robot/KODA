@@ -1,0 +1,70 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kimodo"
+version = "1.0.0"
+description = "Kimodo motion generation model"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "Apache-2.0"}
+dependencies = [
+  "hydra-core>=1.3",
+  "omegaconf>=2.3",
+  "numpy>=1.23",
+  "scipy>=1.10",
+  "transformers==5.1.0",
+  "urllib3>=2.6.3",
+  "boto3",
+  "peft>=0.18",
+  "einops>=0.7",
+  "tqdm>=4.0",
+  "packaging>=21.0",
+  "pydantic>=2.0",
+  "filelock>=3.20.3",
+  "gradio>=6.8.0",
+  "gradio_client>=1.0",
+  "trimesh>=3.21.7",
+  "scenepic>=1.1.0",
+  "pillow>=9.0",
+  "av>=16.1.0",
+  "bvhio",
+]
+
+[project.optional-dependencies]
+demo = [
+  "viser @ git+https://github.com/nv-tlabs/kimodo-viser.git",
+]
+soma = [
+  "py-soma-x @ git+https://github.com/NVlabs/SOMA-X.git"
+]
+all = [
+  "viser @ git+https://github.com/nv-tlabs/kimodo-viser.git",
+  "py-soma-x @ git+https://github.com/NVlabs/SOMA-X.git"
+]
+
+[project.scripts]
+kimodo_gen = "kimodo.scripts.generate:main"
+kimodo_demo = "kimodo.demo:main"
+kimodo_textencoder = "kimodo.scripts.run_text_encoder_server:main"
+kimodo_convert = "kimodo.scripts.motion_convert:main"
+
+[tool.setuptools]
+include-package-data = true
+zip-safe = false
+
+[tool.setuptools.package-data]
+kimodo = ["assets/**/*"]
+
+[tool.flake8]
+max-line-length = 120
+
+[tool.ruff]
+extend-select = ["I001"]  # Enable import sorting
+line-length = 120
+
+[tool.ruff.lint.isort]
+known-first-party = ["kimodo"]
+known-third-party = ["torch", "numpy", "pytorch_lightning", "wandb", "tqdm"]
+force-sort-within-sections = false
