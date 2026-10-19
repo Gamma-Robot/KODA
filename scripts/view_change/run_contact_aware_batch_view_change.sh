@@ -53,16 +53,18 @@ CONTACT_DETECTOR="${CONTACT_DETECTOR:-pointcloud}"
 # dex3 keeps the contact-aware Dex3 path unchanged. g1_brainco uses the BrainCo
 # palm refinement and, when JOINT_CONTACT_ENABLED=1, neighborhood Laplacian contact.
 HAND_MODE="${HAND_MODE:-dex3}"
-# jax keeps Hydrax fragment-knot CEM. sil-tts runs Warp+ONNX ScaleBFM SIL
-# (configs/experiments/scalebfm_torso_umi3_ego2humanoid.yaml) and skips JAX workers.
+# The supported MPC backend is Hydrax fragment-knot CEM on JAX.
 MPC_BACKEND="${MPC_BACKEND:-jax}"
+[[ "${MPC_BACKEND}" == "jax" ]] || {
+  echo "MPC_BACKEND must be jax" >&2; exit 2;
+}
 MAX_SOURCE_FRAMES="${MAX_SOURCE_FRAMES:-}"
 MAX_TARGET_FRAMES="${MAX_TARGET_FRAMES:-}"
 SEED="${SEED:-42}"
 DRY_RUN="${DRY_RUN:-0}"
 # 1 = finish contact SAM/precompute for the whole queue (resident EfficientSAM3),
 # then switch every GPU to tracking + view-change (resident Kimodo + JAX;
-# DiffuEraser + DA3 start on that GPU's first view-change and stay hot).
+# DiffuEraser starts on that GPU's first view-change and stays hot).
 # 0 restores the old per-session full pipeline.
 STAGE_BARRIER="${STAGE_BARRIER:-1}"
 
@@ -92,7 +94,6 @@ THREE_POINT_ARTIFACT_MANIFEST="${THREE_POINT_ARTIFACT_MANIFEST:-${PROJECT_ROOT}/
 SAM_PY="${SAM_PY:-${KODA_PYTHON:-${PYTHON:-python3}}}"
 EFFICIENTSAM3_WORKER="${PROJECT_ROOT}/scripts/view_change/efficientsam3_worker.py"
 KIMODO_WORKER="${PROJECT_ROOT}/scripts/view_change/kimodo_init_worker.py"
-DA3_WORKER="${PROJECT_ROOT}/scripts/view_change/da3_depth_worker.py"
 DIFFUERASER_PY="${DIFFUERASER_PY:-${KODA_PYTHON:-${PYTHON:-python3}}}"
 DIFFUERASER_WORKER="${DIFFUERASER_WORKER:-${PROJECT_ROOT}/resources/DiffuEraser/diffueraser_worker.py}"
 PROPAINTER_WEIGHTS="${PROPAINTER_WEIGHTS:-${KODA_ASSETS:-${PROJECT_ROOT}/assets}/models/diffueraser/propainter}"
@@ -101,7 +102,7 @@ RESIDENT_WORKERS="${PROJECT_ROOT}/scripts/view_change/resident_gpu_workers.sh"
 for required in "${SCALER_PY}" "${CONTACT_SCRIPT}" "${PRECOMPUTE_SCRIPT}" \
   "${PREPARE_REFERENCE_SCRIPT}" "${EGOHUMANOID_CONTACT_SCRIPT}" \
   "${EFFICIENTSAM3_WORKER}" "${DIFFUERASER_WORKER}" \
-  "${KIMODO_WORKER}" "${DA3_WORKER}" "${RESIDENT_WORKERS}" \
+  "${KIMODO_WORKER}" "${RESIDENT_WORKERS}" \
   "${SAM_PY}" "${DIFFUERASER_PY}"; do
   [[ -f "${required}" || -x "${required}" ]] || { echo "missing required file: ${required}" >&2; exit 2; }
 done
@@ -118,9 +119,6 @@ command -v flock >/dev/null || { echo "missing required command: flock" >&2; exi
 }
 [[ "${HAND_MODE}" == "dex3" || "${HAND_MODE}" == "g1_brainco" ]] || {
   echo "HAND_MODE must be dex3 or g1_brainco" >&2; exit 2;
-}
-[[ "${MPC_BACKEND}" == "jax" || "${MPC_BACKEND}" == "sil-tts" ]] || {
-  echo "MPC_BACKEND must be jax or sil-tts" >&2; exit 2;
 }
 if [[ "${HAND_MODE}" == "g1_brainco" ]]; then
   [[ "${JOINT_CONTACT_ENABLED}" == "0" || "${JOINT_CONTACT_ENABLED}" == "1" ]] || {
@@ -195,7 +193,7 @@ QUEUE_LOCK="${LOG_ROOT}/queue.lock"
 printf 'session_id\tstatus\texit_code\tgpu\tcontact_candidate\toutput\n' > "${STATUS_FILE}"
 printf '0\n' > "${QUEUE_INDEX_FILE}"
 # start_jax_mpc_worker / start_kimodo_worker / start_diffueraser_worker /
-# start_da3_worker / start_efficientsam3_worker
+# start_efficientsam3_worker
 # shellcheck source=resident_gpu_workers.sh
 . "${RESIDENT_WORKERS}"
 
@@ -522,7 +520,6 @@ run_contact_session() {
     JAX_MPC_WORKER_SOCK="${JAX_MPC_WORKER_SOCK:-}" \
     KIMODO_WORKER_SOCK="${KIMODO_WORKER_SOCK:-}" \
     DIFFUERASER_WORKER_SOCK="${DIFFUERASER_WORKER_SOCK:-}" \
-    DA3_WORKER_SOCK="${DA3_WORKER_SOCK:-}" \
     EFFICIENTSAM3_WORKER_SOCK="${EFFICIENTSAM3_WORKER_SOCK:-}" \
     JAX_COMPILATION_CACHE_DIR="${WORK_ROOT}/jax_cache" \
     Q0_ZERO_ARM_NO_SMOOTHNESS="${Q0_ZERO_ARM_NO_SMOOTHNESS:-1}" \
@@ -702,7 +699,7 @@ process_session() {
 
 # Worker start/stop helpers are sourced from resident_gpu_workers.sh
 # (start_jax_mpc_worker, start_kimodo_worker, start_diffueraser_worker,
-#  start_da3_worker, start_efficientsam3_worker).
+#  start_efficientsam3_worker).
 
 claim_next_session() {
   (
@@ -835,8 +832,6 @@ run_worker() {
   EFFICIENTSAM3_WORKER_SOCK=""
   DIFFUERASER_WORKER_PID=""
   DIFFUERASER_WORKER_SOCK=""
-  DA3_WORKER_PID=""
-  DA3_WORKER_SOCK=""
   if [[ "${phase}" == "precompute" ]]; then
     start_efficientsam3_worker "${gpu}"
     trap 'stop_efficientsam3_worker "${GPU}"' EXIT
@@ -845,19 +840,11 @@ run_worker() {
     trap 'stop_all_gpu_workers "${GPU}"' EXIT
   elif [[ "${phase}" == "tracking" ]]; then
     start_kimodo_worker "${gpu}" || echo "[contact-batch gpu=${gpu}] Kimodo worker unavailable; falling back to per-session subprocess" >&2
-    if [[ "${MPC_BACKEND}" == "jax" ]]; then
-      start_jax_mpc_worker "${gpu}"
-    else
-      echo "[contact-batch gpu=${gpu}] mpc_backend=${MPC_BACKEND}; skipping JAX CEM worker"
-    fi
+    start_jax_mpc_worker "${gpu}"
     trap 'stop_all_gpu_workers "${GPU}"' EXIT
   else
     start_kimodo_worker "${gpu}" || echo "[contact-batch gpu=${gpu}] Kimodo worker unavailable; falling back to per-session subprocess" >&2
-    if [[ "${MPC_BACKEND}" == "jax" ]]; then
-      start_jax_mpc_worker "${gpu}"
-    else
-      echo "[contact-batch gpu=${gpu}] mpc_backend=${MPC_BACKEND}; skipping JAX CEM worker"
-    fi
+    start_jax_mpc_worker "${gpu}"
     trap 'stop_all_gpu_workers "${GPU}"' EXIT
   fi
   while true; do

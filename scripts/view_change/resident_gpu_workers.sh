@@ -107,8 +107,6 @@ resident_worker_defaults() {
   DIFFUERASER_PY="${DIFFUERASER_PY:-${KODA_PYTHON:-${PYTHON:-python3}}}"
   DIFFUERASER_WORKER="${DIFFUERASER_WORKER:-${PROJECT_ROOT}/resources/DiffuEraser/diffueraser_worker.py}"
   PROPAINTER_WEIGHTS="${PROPAINTER_WEIGHTS:-${KODA_ASSETS:-${PROJECT_ROOT}/assets}/models/diffueraser/propainter}"
-  DA3_PY="${DA3_PY:-${KODA_PYTHON:-${PYTHON:-python3}}}"
-  DA3_WORKER="${DA3_WORKER:-${PROJECT_ROOT}/scripts/view_change/da3_depth_worker.py}"
   WORK_ROOT="${WORK_ROOT:-${LOG_ROOT%/logs_*}}"
 }
 
@@ -217,43 +215,17 @@ stop_diffueraser_worker() {
   unset DIFFUERASER_WORKER_SOCK
 }
 
-start_da3_worker() {
-  local gpu="$1"
-  resident_worker_defaults
-  [[ -x "${DA3_PY}" ]] || { echo "missing da3 python: ${DA3_PY}" >&2; return 2; }
-  [[ -f "${DA3_WORKER}" ]] || { echo "missing da3 worker: ${DA3_WORKER}" >&2; return 2; }
-  local pid
-  pid="$(_launch_worker "${gpu}" da3 \
-    "${DA3_PY}" "${DA3_WORKER}" \
-      --socket "${LOG_ROOT}/da3_gpu_${gpu}.sock" \
-      --device cuda)" || return $?
-  DA3_WORKER_PID="${pid}"
-  DA3_WORKER_SOCK="${LOG_ROOT}/da3_gpu_${gpu}.sock"
-  export DA3_WORKER_SOCK
-}
-
-stop_da3_worker() {
-  local gpu="${1:-${GPU:-}}"
-  stop_named_gpu_worker da3 "${gpu}"
-  DA3_WORKER_PID=""
-  DA3_WORKER_SOCK=""
-  unset DA3_WORKER_SOCK
-}
-
 ensure_view_change_workers() {
   local gpu="${1:-${GPU:-}}"
   [[ -n "${LOG_ROOT:-}" && -n "${gpu}" ]] || return 0
   resident_worker_defaults
   start_diffueraser_worker "${gpu}" || \
     echo "[gpu-workers gpu=${gpu}] DiffuEraser worker unavailable; falling back to per-session load" >&2
-  start_da3_worker "${gpu}" || \
-    echo "[gpu-workers gpu=${gpu}] DA3 worker unavailable; falling back to in-process load" >&2
 }
 
 stop_view_change_workers() {
   local gpu="${1:-${GPU:-}}"
   stop_diffueraser_worker "${gpu}"
-  stop_da3_worker "${gpu}"
 }
 
 stop_all_gpu_workers() {

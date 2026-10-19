@@ -142,7 +142,7 @@ require_file "${SCRIPT_DIR}/efficientsam3_client.py"
 require_file "${SCRIPT_DIR}/contact_pointcloud_analysis.py"
 require_file "${HAND_PY}"
 if [[ "${HAND_MODE}" != "g1_brainco" ]]; then
-  require_file "${PROJECT_ROOT}/resources/SparseTrack/scripts/egodex_to_dex3_hand_qpos.py"
+  require_file "${PROJECT_ROOT}/src/koda/retargeting/dex3.py"
 else
   require_file "${SCRIPT_DIR}/brainco_hand_retarget.py"
 fi
@@ -357,8 +357,8 @@ if [[ "${JOINT_CONTACT_ENABLED}" == "1" && \
   mkdir -p "$(dirname "${BASE_HAND_50HZ}")"
   echo "[contact-precompute] stage base Dex3 position retarget on tracking timeline"
   PYTHONNOUSERSITE=1 \
-  PYTHONPATH="${PROJECT_ROOT}/resources/xr_teleoperate/teleop/robot_control/dex-retargeting/src" \
-    "${HAND_PY}" "${PROJECT_ROOT}/resources/SparseTrack/scripts/egodex_to_dex3_hand_qpos.py" \
+  PYTHONPATH="${PROJECT_ROOT}/src:${PROJECT_ROOT}/resources/xr_teleoperate/teleop/robot_control/dex-retargeting/src${PYTHONPATH:+:${PYTHONPATH}}" \
+    "${HAND_PY}" -m koda.retargeting.dex3 \
     --session-dir "${SESSION_DIR}" \
     --target-kinematics-npz "${TARGET_TIMESTAMPS_NPZ}" \
     --output "${BASE_HAND_50HZ}" \

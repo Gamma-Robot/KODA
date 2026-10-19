@@ -34,13 +34,13 @@ esac
 TRACKING_ROOT="${TRACKING_ROOT:-${ROOT}/data/kinematics/contact_aware_6d_reference_tracking}"
 TRACKING_CACHE_ROOT="${TRACKING_CACHE_ROOT:-}"
 VIEW_ROOT="${VIEW_ROOT:-${ROOT}/data/view_change/contact_aware_6d_reference_tracking}"
-WORK_ROOT="${WORK_ROOT:-${KODA_CACHE:-${PROJECT_ROOT}/.cache}/contact_aware_6d_reference_tracking}"
+WORK_ROOT="${WORK_ROOT:-${KODA_CACHE:-${ROOT}/.cache}/contact_aware_6d_reference_tracking}"
 
 GPU="${GPU:-1}"
 CONTACT_DEVICE="${CONTACT_DEVICE:-cuda}"
 MPC_BACKEND="${MPC_BACKEND:-jax}"
-[[ "${MPC_BACKEND}" == "jax" || "${MPC_BACKEND}" == "sil-tts" ]] || {
-  echo "[contact-aware-6d] ERROR: MPC_BACKEND must be jax or sil-tts" >&2
+[[ "${MPC_BACKEND}" == "jax" ]] || {
+  echo "[contact-aware-6d] ERROR: MPC_BACKEND must be jax" >&2
   exit 2
 }
 FORCE="${FORCE:-0}"
@@ -495,7 +495,6 @@ env GPU="${GPU}" FORCE="${VIEW_FORCE}" SESSION="${SESSION_DIR}" \
   SOURCE_ADAPTER_DIR="${EXPERIMENT_DIR}/source_adapter" \
   LOG_ROOT="${LOG_ROOT:-}" \
   DIFFUERASER_WORKER_SOCK="${DIFFUERASER_WORKER_SOCK:-}" \
-  DA3_WORKER_SOCK="${DA3_WORKER_SOCK:-}" \
   EFFICIENTSAM3_WORKER_SOCK="${EFFICIENTSAM3_WORKER_SOCK:-}" \
   RETARGET_TYPE="position" LEFT_WRIST_YAW_OFFSET_DEG="0" RIGHT_WRIST_YAW_OFFSET_DEG="0" \
   MAX_SOURCE_FRAMES="${SOURCE_COUNT_ENV}" MAX_TARGET_FRAMES="${MAX_TARGET_FRAMES:-}" \

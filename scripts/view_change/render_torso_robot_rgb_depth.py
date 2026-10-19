@@ -12,6 +12,7 @@ import argparse
 import hashlib
 import json
 import math
+import sys
 import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -19,23 +20,25 @@ from pathlib import Path
 import mujoco
 import numpy as np
 
-from mujoco_robot_id_capture import robot_geom_ids, robot_id_from_segmentation
-
-try:
-    from frame_volume import create_volume
-except ImportError:
-    from .frame_volume import create_volume
-
-try:
-    from frame_volume import create_volume
-except ImportError:
-    from .frame_volume import create_volume
-
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROJECT_ROOT / "src"))
+
+from koda.rendering.segmentation import robot_geom_ids, robot_id_from_segmentation
+
+try:
+    from frame_volume import create_volume
+except ImportError:
+    from .frame_volume import create_volume
+
+try:
+    from frame_volume import create_volume
+except ImportError:
+    from .frame_volume import create_volume
+
+
 RESOURCE_ROOT = PROJECT_ROOT / "resources"
 DEFAULT_DEX3_XML = (
-    RESOURCE_ROOT / "SparseTrack/assets/g1_with_visual_dex3_hands.xml"
+    RESOURCE_ROOT / "robots/g1_dex3/g1_with_visual_dex3_hands.xml"
 )
 DEFAULT_MESHDIR = (
     RESOURCE_ROOT

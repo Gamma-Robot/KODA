@@ -1,33 +1,27 @@
 #!/usr/bin/env python3
-"""Composite SparseTrack RGB onto novel-view / clean final via depth z-buffer.
+"""Composite robot RGB over the warped source RGB-D view using metric depth.
 
-Default (legacy) depth rules:
-  - DA3 on final, scale-aligned to MuJoCo with median(d_st / d_da3) on non-hole pixels.
-  - Hole pixels: d_nv = ``--hole-depth`` (large but finite).
-  - MuJoCo non-robot pixels: d_st = ``--st-bg-depth``.
-  - Robot/hand keeps real MuJoCo depth; paste if d_st < d_nv.
-
-Metric mode (``--no-scale --no-hole``):
-  - Use DA3 depth as-is (no median scale) and MuJoCo robot depth as-is.
-  - No hole override; z-buffer is pure closer-wins on real depths.
+Observed pixels use a metric z-buffer. Hole pixels use paste mode A (valid
+robot geometry) or mode B (also compare against neighboring observed depth).
+No estimated depth or depth-scale fitting is used.
 """
 from __future__ import annotations
 
 import argparse
 import json
-import os
-import socket
-import sys
 from pathlib import Path
 
 import cv2
 import imageio.v2 as imageio
 import numpy as np
-import torch
 from tqdm import tqdm
 
+try:
+    import torch
+except ImportError:  # CPU metric compositing does not require PyTorch.
+    torch = None
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-RESOURCE_ROOT = PROJECT_ROOT / "resources"
 DATA_ROOT = PROJECT_ROOT / "data"
 
 try:
@@ -36,7 +30,6 @@ try:
         as_mask,
         as_rgb,
         create_volume,
-        is_packed_stream,
         open_volume,
     )
     from paste_mode import paste_mask_mode_ab
@@ -52,7 +45,6 @@ except ImportError:  # pragma: no cover - standalone invocation fallback
         as_mask,
         as_rgb,
         create_volume,
-        is_packed_stream,
         open_volume,
     )
     from .paste_mode import paste_mask_mode_ab
@@ -60,89 +52,6 @@ except ImportError:  # pragma: no cover - standalone invocation fallback
     PROVENANCE_OBSERVED = np.uint8(1)
     PROVENANCE_FUSED = np.uint8(2)
     PROVENANCE_ROBOT = np.uint8(3)
-
-
-def _json_socket_request(
-    sock_path: str,
-    payload: dict,
-    *,
-    timeout_s: float = 7200.0,
-) -> dict:
-    encoded = (json.dumps(payload) + "\n").encode("utf-8")
-    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    try:
-        sock.settimeout(float(timeout_s))
-        sock.connect(sock_path)
-        sock.sendall(encoded)
-        buf = b""
-        while b"\n" not in buf:
-            chunk = sock.recv(65536)
-            if not chunk:
-                raise ConnectionError("DA3 worker closed the connection")
-            buf += chunk
-        reply = json.loads(buf.split(b"\n", 1)[0].decode("utf-8"))
-        if not isinstance(reply, dict):
-            raise ValueError("DA3 worker reply must be a JSON object")
-        return reply
-    finally:
-        sock.close()
-
-
-def _da3_worker_infer_volume(
-    *,
-    rgb_dir: Path,
-    out_dir: Path,
-    process_res: int,
-    fx: float | None,
-    fy: float | None,
-    metric_focal_div: float | None,
-    start: int,
-    end: int,
-) -> dict:
-    sock_path = str(os.environ.get("DA3_WORKER_SOCK", "")).strip()
-    if not sock_path:
-        raise RuntimeError("DA3_WORKER_SOCK is empty")
-    if not os.path.exists(sock_path):
-        raise FileNotFoundError(f"DA3 worker socket is missing: {sock_path}")
-    print(f"[composite] using persistent DA3 worker {sock_path}", flush=True)
-    reply = _json_socket_request(
-        sock_path,
-        {
-            "op": "infer_volume",
-            "rgb_dir": str(Path(rgb_dir).resolve()),
-            "out_dir": str(Path(out_dir).resolve()),
-            "process_res": int(process_res),
-            "fx": None if fx is None else float(fx),
-            "fy": None if fy is None else float(fy),
-            "metric_focal_div": (
-                None if metric_focal_div is None else float(metric_focal_div)
-            ),
-            "start": int(start),
-            "end": int(end),
-        },
-    )
-    if not reply.get("ok"):
-        raise RuntimeError(reply.get("error") or "DA3 worker infer_volume failed")
-    return reply
-
-
-def _stub_da3_optional_deps() -> None:
-    """Avoid hard deps (moviepy/gsplat/pycolmap) pulled by DA3 export utils."""
-    import types
-
-    stubs = {
-        "moviepy": types.ModuleType("moviepy"),
-        "moviepy.editor": types.ModuleType("moviepy.editor"),
-        "pycolmap": types.ModuleType("pycolmap"),
-        "gsplat": types.ModuleType("gsplat"),
-        "plyfile": types.ModuleType("plyfile"),
-    }
-    stubs["moviepy.editor"].VideoFileClip = object
-    stubs["moviepy.editor"].ImageSequenceClip = object
-    stubs["plyfile"].PlyData = object
-    stubs["plyfile"].PlyElement = object
-    for name, mod in stubs.items():
-        sys.modules.setdefault(name, mod)
 
 
 def parse_args() -> argparse.Namespace:
@@ -166,23 +75,13 @@ def parse_args() -> argparse.Namespace:
         "--hole-masks",
         type=Path,
         default=DATA_ROOT / "view_change/legacy/hole_masks",
-        help="Optional hole / hand masks. Ignored when --no-hole.",
-    )
-    p.add_argument(
-        "--no-hole",
-        action="store_true",
-        help="Do not override any pixel with --hole-depth; use DA3 depth everywhere for bg.",
-    )
-    p.add_argument(
-        "--no-scale",
-        action="store_true",
-        help="Do not median-scale DA3 to MuJoCo; treat DA3 depth as metric meters.",
+        help="Hole masks for the warped source RGB-D frames.",
     )
     p.add_argument(
         "--depth-vis-out",
         type=Path,
         default=None,
-        help="Optional side-by-side depth viz mp4 of z-buffer inputs (MuJoCo|DA3).",
+        help="Optional side-by-side depth preview (MuJoCo | source RGB-D).",
     )
     p.add_argument(
         "--depth-vis-vmin",
@@ -197,46 +96,6 @@ def parse_args() -> argparse.Namespace:
         help="Far clip for depth viz colormap (meters).",
     )
     p.add_argument(
-        "--da3-model-dir",
-        type=str,
-        default=str(
-            Path(os.environ.get("KODA_ASSETS", str(PROJECT_ROOT / "assets")))
-            / "models/depth_anything_3"
-        ),
-        help="Local snapshot path or HF id (e.g. depth-anything/DA3METRIC-LARGE)",
-    )
-    p.add_argument(
-        "--da3-src",
-        type=Path,
-        default=RESOURCE_ROOT / "Depth-Anything-3/src",
-        help="Add this to sys.path for depth_anything_3 imports",
-    )
-    p.add_argument(
-        "--metric-focal-div",
-        type=float,
-        default=300.0,
-        help=(
-            "DA3METRIC-LARGE: d_m = d_raw * ((fx+fy)/2) / this, using process-res focal. "
-            "Set <=0 to disable (for DA3-BASE relative depth)."
-        ),
-    )
-    p.add_argument(
-        "--camera-k-json",
-        type=Path,
-        default=None,
-        help=(
-            "Optional camera_K.json with fx/fy (and optional width/height). "
-            "If omitted with --metric-focal-div>0, uses EgoDex native fx=fy from "
-            "cx≈W/2 style K scaled to the clean video resolution."
-        ),
-    )
-    p.add_argument(
-        "--reuse-da3-dir",
-        type=Path,
-        default=None,
-        help="If set, load per-frame DA3 depth from this dir (XXXXXX.npy) instead of running DA3",
-    )
-    p.add_argument(
         "--out",
         type=Path,
         default=None,
@@ -245,7 +104,6 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--dump-dir", type=Path, default=None, help="Optional dump for depths/masks")
     p.add_argument("--start-frame", type=int, default=0)
     p.add_argument("--max-frames", type=int, default=None)
-    p.add_argument("--process-res", type=int, default=504)
     p.add_argument("--device", type=str, default="cuda")
     p.add_argument("--fps", type=float, default=30.0)
     # Depth policy
@@ -271,34 +129,24 @@ def parse_args() -> argparse.Namespace:
         "--st-bg-depth",
         type=float,
         default=1e9,
-        help="Assigned depth for non-robot MuJoCo pixels (must be > --hole-depth)",
-    )
-    p.add_argument(
-        "--hole-depth",
-        type=float,
-        default=1e6,
-        help="Assigned d_nv for original novel-view hole pixels (large, but < --st-bg-depth)",
+        help="Background sentinel for invalid depth, in meters.",
     )
     p.add_argument(
         "--bg-depth-dir",
         type=Path,
-        default=None,
-        help=(
-            "Optional metric background depth dir (XXXXXX.npy), e.g. warped GT depth. "
-            "When set, skips DA3 and uses these depths as d_bg (meters)."
-        ),
+        required=True,
+        help="Metric source RGB-D depth warped into the target camera (meters).",
     )
     p.add_argument(
         "--paste-mode",
         type=str,
-        default="legacy",
-        choices=["legacy", "A", "B"],
+        default="B",
+        choices=["A", "B"],
         help=(
             "A/B hole paste (requires --bg-depth-dir): "
             "A=in_hole & d_rob valid → paste; "
             "B=also d_rob < neighborhood d_bg. "
-            "Non-hole always metric z-buffer d_rob < d_bg. "
-            "legacy=previous DA3/hole-depth behaviour."
+            "Non-hole always metric z-buffer d_rob < d_bg."
         ),
     )
     p.add_argument(
@@ -481,101 +329,10 @@ def _indexed_mask_files(dir_path: Path) -> list[Path]:
     return files
 
 
-def load_da3(model_dir: str | Path, da3_src: Path, device: str):
-    """Load DA3. Prefer conda env ``da3`` where deps are installed."""
-    src = str(da3_src.resolve())
-    if src not in sys.path:
-        sys.path.insert(0, src)
-    try:
-        from depth_anything_3.api import DepthAnything3
-    except Exception:
-        _stub_da3_optional_deps()
-        import types
-
-        export_pkg = types.ModuleType("depth_anything_3.utils.export")
-        export_pkg.export = lambda *a, **k: None  # type: ignore[attr-defined]
-        sys.modules["depth_anything_3.utils.export"] = export_pkg
-        for sub in ("gs", "colmap", "glb", "npz", "depth_vis", "feat_vis"):
-            sys.modules.setdefault(
-                f"depth_anything_3.utils.export.{sub}", types.ModuleType(sub)
-            )
-        pose_align = types.ModuleType("depth_anything_3.utils.pose_align")
-        pose_align.align_poses_umeyama = lambda *a, **k: None  # type: ignore[attr-defined]
-        sys.modules["depth_anything_3.utils.pose_align"] = pose_align
-        sys.modules.setdefault("evo", types.ModuleType("evo"))
-        sys.modules.setdefault("evo.core", types.ModuleType("evo.core"))
-        traj = types.ModuleType("evo.core.trajectory")
-        traj.PosePath3D = object  # type: ignore[attr-defined]
-        sys.modules.setdefault("evo.core.trajectory", traj)
-        from depth_anything_3.api import DepthAnything3
-
-    model = DepthAnything3.from_pretrained(str(model_dir))
-    model = model.to(device)
-    model.eval()
-    return model
-
-
-def estimate_scale(d_da3: np.ndarray, d_st: np.ndarray, hole: np.ndarray) -> float | None:
-    """Median scale s so that s * d_da3 ≈ d_st on non-hole valid pixels."""
-    valid = (
-        (~hole)
-        & np.isfinite(d_da3)
-        & np.isfinite(d_st)
-        & (d_da3 > 1e-6)
-        & (d_st > 1e-6)
-        & (d_st < 1e5)
-    )
-    if valid.sum() < 64:
-        return None
-    ratios = d_st[valid] / d_da3[valid]
-    return float(np.median(ratios))
-
-
 def resize_depth(depth: np.ndarray, h: int, w: int) -> np.ndarray:
     if depth.shape[:2] == (h, w):
         return depth.astype(np.float32)
     return cv2.resize(depth.astype(np.float32), (w, h), interpolation=cv2.INTER_LINEAR)
-
-
-def _load_fx_fy(k_json: Path | None, frame_w: int, frame_h: int) -> tuple[float, float]:
-    """Return fx, fy in pixels for the given frame size."""
-    if k_json is not None and k_json.is_file():
-        meta = json.loads(k_json.read_text())
-        fx = float(meta.get("fx", meta["K"][0][0]))
-        fy = float(meta.get("fy", meta["K"][1][1]))
-        kw = int(meta.get("width", meta.get("native_width", frame_w)))
-        kh = int(meta.get("height", meta.get("native_height", frame_h)))
-        if kw != frame_w or kh != frame_h:
-            fx *= frame_w / float(kw)
-            fy *= frame_h / float(kh)
-        return fx, fy
-    # Fallback: EgoDex declutter trim native 1920x1080 fx=fy≈736.63
-    fx0, fy0, w0, h0 = 736.6339111328125, 736.6339111328125, 1920, 1080
-    return fx0 * (frame_w / w0), fy0 * (frame_h / h0)
-
-
-@torch.inference_mode()
-def da3_depth(
-    model,
-    image_rgb: np.ndarray,
-    process_res: int,
-    *,
-    fx: float | None = None,
-    fy: float | None = None,
-    metric_focal_div: float | None = None,
-) -> np.ndarray:
-    pred = model.inference([image_rgb], process_res=process_res)
-    d = np.asarray(pred.depth[0], dtype=np.float32)
-    if metric_focal_div is not None and metric_focal_div > 0:
-        if fx is None or fy is None:
-            raise ValueError("metric_focal_div requires fx/fy")
-        h_full, w_full = image_rgb.shape[:2]
-        h_p, w_p = d.shape[:2]
-        fx_p = float(fx) * (w_p / float(w_full))
-        fy_p = float(fy) * (h_p / float(h_full))
-        focal = 0.5 * (fx_p + fy_p)
-        d = (d * (focal / float(metric_focal_div))).astype(np.float32)
-    return d
 
 
 def _colorize_depth(d: np.ndarray, vmin: float, vmax: float) -> np.ndarray:
@@ -630,13 +387,15 @@ def _neighbor_dbg_median(
     if not np.any(hole):
         return out[0] if not batched else out
     requested = "cpu" if device is None else str(device)
-    if requested.startswith("cuda") and torch.cuda.is_available():
-        torch_device = torch.device(requested if requested != "cuda" else "cuda")
-    elif device is None and torch.cuda.is_available():
-        torch_device = torch.device("cuda")
-    else:
-        torch_device = torch.device("cpu")
     try:
+        if torch is None:
+            raise ImportError("PyTorch unavailable; use NumPy median")
+        if requested.startswith("cuda") and torch.cuda.is_available():
+            torch_device = torch.device(requested if requested != "cuda" else "cuda")
+        elif device is None and torch.cuda.is_available():
+            torch_device = torch.device("cuda")
+        else:
+            torch_device = torch.device("cpu")
         filled = np.where(valid, d_bg, np.nan).astype(np.float32, copy=False)
         t = torch.from_numpy(np.ascontiguousarray(filled)).to(torch_device)[:, None]
         hole_t = torch.from_numpy(np.ascontiguousarray(hole)).to(torch_device)
@@ -808,14 +567,6 @@ def _close_final_source(source) -> None:
 
 def main() -> None:
     args = parse_args()
-    use_metric_ab = args.paste_mode in ("A", "B")
-    if use_metric_ab and args.bg_depth_dir is None:
-        raise SystemExit("--paste-mode A/B requires --bg-depth-dir")
-    if not use_metric_ab and not args.no_hole and not (args.hole_depth < args.st_bg_depth):
-        raise SystemExit(
-            f"--hole-depth ({args.hole_depth}) must be < --st-bg-depth ({args.st_bg_depth})"
-        )
-
     st_rgb_vol = open_volume(args.st_rgb_dir, color_space="rgb")
     st_depth_vol = open_volume(args.st_depth_dir)
     robot_mask_root = args.robot_mask_dir or args.robot_mask_id_dir
@@ -829,27 +580,19 @@ def main() -> None:
         raise SystemExit("--require-robot-id also requires --robot-instance-json")
     source_to_target, timeline_contract = _load_source_to_target_map(args.timeline_manifest)
     robot_ids = _parse_ids(args.robot_ids)
-    hole_vol: FrameVolume | None
-    if args.no_hole and not use_metric_ab:
-        hole_vol = None
-    else:
-        hole_vol = open_volume(args.hole_masks) if args.hole_masks is not None else None
-        if use_metric_ab and hole_vol is None:
-            raise SystemExit("paste-mode A/B requires --hole-masks")
+    hole_vol = open_volume(args.hole_masks)
 
     if args.final_rgb_dir is None and args.final_mp4 is None:
         raise SystemExit("one of --final-mp4 or --final-rgb-dir is required")
     final_source, fps = _open_final_source(args)
-    geometry_count = _final_source_length(final_source, len(hole_vol) if hole_vol is not None else len(st_rgb_vol))
+    geometry_count = _final_source_length(final_source, len(hole_vol))
     n = geometry_count
-    if hole_vol is not None and len(hole_vol) < n:
+    if len(hole_vol) < n:
         raise SystemExit(f"frame count mismatch final={n} holes={len(hole_vol)}")
 
-    bg_vol: FrameVolume | None = None
-    if args.bg_depth_dir is not None:
-        bg_vol = open_volume(args.bg_depth_dir)
-        if len(bg_vol) < n:
-            raise SystemExit(f"bg-depth-dir has {len(bg_vol)} < final {n}")
+    bg_vol = open_volume(args.bg_depth_dir)
+    if len(bg_vol) < n:
+        raise SystemExit(f"bg-depth-dir has {len(bg_vol)} < final {n}")
     geom_prov_vol: FrameVolume | None = None
     if args.geometry_provenance_dir is not None:
         geom_prov_vol = open_volume(args.geometry_provenance_dir)
@@ -891,73 +634,16 @@ def main() -> None:
             dump_dir = args.out.parent / f"{args.out.stem}_debug"
         else:
             raise SystemExit("--dump-dir or --rgb-out-dir is required when --out is omitted")
-    da3_dir = dump_dir / "da3_depth"
     paste_dir = dump_dir / "paste_mask"
     robot_dir = dump_dir / "robot_mask"
     provenance_dir = dump_dir / "provenance"
 
-    model = None
-    reuse_da3_vol = None
-    worker_da3 = False
-    metric_div = (
-        float(args.metric_focal_div)
-        if args.metric_focal_div is not None and args.metric_focal_div > 0
-        else None
-    )
     first_rgb = _get_final_frame(final_source, 0)
     if first_rgb.ndim != 3 or first_rgb.shape[2] < 3:
         _close_final_source(final_source)
         raise SystemExit("final RGB source must contain at least three channels")
     h0, w0 = first_rgb.shape[:2]
-    fx, fy = _load_fx_fy(args.camera_k_json, w0, h0)
-    da3_sock = str(os.environ.get("DA3_WORKER_SOCK", "")).strip()
-    if bg_vol is not None:
-        print(f"Using metric bg depth from {args.bg_depth_dir} paste_mode={args.paste_mode}", flush=True)
-    elif args.reuse_da3_dir is not None:
-        print(f"Reusing DA3 depths from {args.reuse_da3_dir}", flush=True)
-        if is_packed_stream(args.reuse_da3_dir):
-            reuse_da3_vol = open_volume(args.reuse_da3_dir)
-    elif (
-        da3_sock
-        and args.final_rgb_dir is not None
-        and os.path.exists(da3_sock)
-    ):
-        try:
-            _da3_worker_infer_volume(
-                rgb_dir=args.final_rgb_dir,
-                out_dir=da3_dir,
-                process_res=int(args.process_res),
-                fx=float(fx),
-                fy=float(fy),
-                metric_focal_div=metric_div,
-                start=int(start),
-                end=int(end),
-            )
-            worker_da3 = True
-        except Exception as error:
-            print(
-                f"[composite] DA3 worker failed ({error}); loading in-process",
-                flush=True,
-            )
-            device = args.device
-            if device.startswith("cuda") and not torch.cuda.is_available():
-                device = "cpu"
-            print(
-                f"Loading DA3 from {args.da3_model_dir} on {device} "
-                f"metric_focal_div={metric_div} fx={fx:.3f} fy={fy:.3f} frame={w0}x{h0}",
-                flush=True,
-            )
-            model = load_da3(args.da3_model_dir, args.da3_src, device)
-    else:
-        device = args.device
-        if device.startswith("cuda") and not torch.cuda.is_available():
-            device = "cpu"
-        print(
-            f"Loading DA3 from {args.da3_model_dir} on {device} "
-            f"metric_focal_div={metric_div} fx={fx:.3f} fy={fy:.3f} frame={w0}x{h0}",
-            flush=True,
-        )
-        model = load_da3(args.da3_model_dir, args.da3_src, device)
+    print(f"Using metric bg depth from {args.bg_depth_dir} paste_mode={args.paste_mode}", flush=True)
 
     writer = None
     if args.out is not None:
@@ -971,16 +657,11 @@ def main() -> None:
         rgb_out_vol = create_volume(
             rgb_out_dir, n, (h0, w0, 3), np.uint8, fill=0, color_space="rgb"
         )
-    if worker_da3:
-        da3_vol = open_volume(da3_dir, writable=True)
-    else:
-        da3_vol = None
     paste_vol = create_volume(paste_dir, n, (h0, w0), np.uint8, fill=0)
     robot_mask_vol = create_volume(robot_dir, n, (h0, w0), np.uint8, fill=0)
     provenance_vol = create_volume(provenance_dir, n, (h0, w0), np.uint8, fill=0)
 
     scales: list[dict] = []
-    last_scale: float | None = None
     # h0, w0 already set above from first frame
 
     depth_vis_writer = None
@@ -989,9 +670,8 @@ def main() -> None:
         depth_vis_writer = _open_video_writer(args.depth_vis_out, fps, quality=7)
 
     print(
-        f"policy: paste_mode={args.paste_mode} no_scale={args.no_scale} no_hole={args.no_hole} "
-        f"robot_max_depth={args.robot_max_depth} "
-        f"hole_depth={args.hole_depth} st_bg_depth={args.st_bg_depth}",
+        f"policy: paste_mode={args.paste_mode} depth_source=source_rgbd_meters "
+        f"robot_max_depth={args.robot_max_depth} st_bg_depth={args.st_bg_depth}",
         flush=True,
     )
 
@@ -1011,7 +691,7 @@ def main() -> None:
         d_st_raw = np.asarray(st_depth_vol[target_i], dtype=np.float32).squeeze()
         if d_st_raw.ndim != 2:
             raise RuntimeError(
-                f"SparseTrack depth target frame {target_i} for source {i} must be HxW, "
+                f"Robot depth target frame {target_i} for source {i} must be HxW, "
                 f"got {d_st_raw.shape}"
             )
         if d_st_raw.shape[:2] != (h0, w0):
@@ -1025,20 +705,15 @@ def main() -> None:
             robot = _load_robot_mask_array(robot_id_vol[target_i], (h0, w0), robot_ids) & valid_st
         else:
             robot = valid_st & (d_st_raw <= args.robot_max_depth)
-        if hole_vol is None:
-            hole_bool = np.zeros((h0, w0), dtype=bool)
-        else:
-            hole_bool = as_mask(hole_vol[i])
-            if hole_bool.shape[:2] != (h0, w0):
-                hole_bool = cv2.resize(
-                    hole_bool.astype(np.uint8), (w0, h0), interpolation=cv2.INTER_NEAREST
-                ) > 0
-        d_bg = None
-        if bg_vol is not None:
-            d_bg = np.asarray(bg_vol[i], dtype=np.float32).squeeze()
-            if d_bg.ndim != 2:
-                raise RuntimeError(f"background depth frame {i} must be HxW, got {d_bg.shape}")
-            d_bg = resize_depth(d_bg, h0, w0)
+        hole_bool = as_mask(hole_vol[i])
+        if hole_bool.shape[:2] != (h0, w0):
+            hole_bool = cv2.resize(
+                hole_bool.astype(np.uint8), (w0, h0), interpolation=cv2.INTER_NEAREST
+            ) > 0
+        d_bg = np.asarray(bg_vol[i], dtype=np.float32).squeeze()
+        if d_bg.ndim != 2:
+            raise RuntimeError(f"background depth frame {i} must be HxW, got {d_bg.shape}")
+        d_bg = resize_depth(d_bg, h0, w0)
         return {
             "i": i,
             "target_i": target_i,
@@ -1055,8 +730,6 @@ def main() -> None:
         *,
         use_st: np.ndarray,
         d_nv: np.ndarray,
-        d_rel: np.ndarray,
-        used_scale,
     ) -> None:
         i = int(item["i"])
         robot = item["robot"]
@@ -1069,20 +742,17 @@ def main() -> None:
             rgb_out_vol[i] = out
         if depth_vis_writer is not None:
             d_mj_vis = np.where(robot, d_st_raw, np.nan).astype(np.float32)
-            d_da3_vis = d_nv.copy()
-            d_da3_vis[~np.isfinite(d_da3_vis) | (d_da3_vis > 5.0)] = np.nan
+            d_bg_vis = d_nv.copy()
+            d_bg_vis[~np.isfinite(d_bg_vis) | (d_bg_vis > 5.0)] = np.nan
             c_mj = _label(
                 _colorize_depth(d_mj_vis, args.depth_vis_vmin, args.depth_vis_vmax),
                 "MuJoCo(zbuf)",
             )
-            da3_tag = "DA3METRIC(zbuf)" if metric_div else "DA3(zbuf)"
-            c_da = _label(
-                _colorize_depth(d_da3_vis, args.depth_vis_vmin, args.depth_vis_vmax),
-                da3_tag,
+            c_bg = _label(
+                _colorize_depth(d_bg_vis, args.depth_vis_vmin, args.depth_vis_vmax),
+                "Source RGB-D(zbuf)",
             )
-            depth_vis_writer.append_data(np.concatenate([c_mj, c_da], axis=1))
-        if da3_vol is not None:
-            da3_vol[i] = np.asarray(d_rel, dtype=np.float32)
+            depth_vis_writer.append_data(np.concatenate([c_mj, c_bg], axis=1))
         paste_vol[i] = (use_st.astype(np.uint8) * 255)
         robot_mask_vol[i] = (robot.astype(np.uint8) * 255)
         provenance = np.full((h0, w0), PROVENANCE_INVALID, dtype=np.uint8)
@@ -1104,7 +774,7 @@ def main() -> None:
                 "frame": i,
                 "source_index": i,
                 "target_index": int(item["target_i"]),
-                "scale": used_scale,
+                "scale": 1.0,
                 "st_frac": float(use_st.mean()),
                 "robot_frac": float(robot.mean()),
                 "hole_frac": float(hole_bool.mean()),
@@ -1115,124 +785,44 @@ def main() -> None:
             }
         )
 
-    if use_metric_ab:
-        for chunk_start in tqdm(range(start, end, paste_chunk), desc="composite"):
-            chunk_end = min(end, chunk_start + paste_chunk)
-            items = [_load_composite_geometry(i) for i in range(chunk_start, chunk_end)]
-            d_bg_b = np.stack([item["d_bg"] for item in items]).astype(np.float32)
-            d_st_b = np.stack([item["d_st_raw"] for item in items]).astype(np.float32)
-            robot_b = np.stack([item["robot"] for item in items]).astype(bool)
-            hole_b = np.stack([item["hole_bool"] for item in items]).astype(bool)
-            d_nb = None
-            if args.paste_mode == "B":
-                d_nb = _neighbor_dbg_median(
-                    d_bg_b, hole_b, args.neighbor_radius, device=paste_device
-                )
-            use_st_b = paste_mask_mode_ab(
-                d_st_b,
-                d_bg_b,
-                robot_b,
-                hole_b,
-                paste_mode=args.paste_mode,
-                neighbor_depth=d_nb,
-                st_bg_depth=args.st_bg_depth,
-                device=paste_device,
+    for chunk_start in tqdm(range(start, end, paste_chunk), desc="composite"):
+        chunk_end = min(end, chunk_start + paste_chunk)
+        items = [_load_composite_geometry(i) for i in range(chunk_start, chunk_end)]
+        d_bg_b = np.stack([item["d_bg"] for item in items]).astype(np.float32)
+        d_st_b = np.stack([item["d_st_raw"] for item in items]).astype(np.float32)
+        robot_b = np.stack([item["robot"] for item in items]).astype(bool)
+        hole_b = np.stack([item["hole_bool"] for item in items]).astype(bool)
+        d_nb = None
+        if args.paste_mode == "B":
+            d_nb = _neighbor_dbg_median(
+                d_bg_b, hole_b, args.neighbor_radius, device=paste_device
             )
-            for local, item in enumerate(items):
-                d_bg = item["d_bg"]
-                d_nv = np.where(
-                    np.isfinite(d_bg) & (d_bg > 1e-6),
-                    d_bg,
-                    args.st_bg_depth,
-                ).astype(np.float32)
-                _emit_composite_frame(
-                    item,
-                    use_st=np.asarray(use_st_b[local]),
-                    d_nv=d_nv,
-                    d_rel=d_bg,
-                    used_scale=1.0,
-                )
-    else:
-        for i in tqdm(range(start, end), desc="composite"):
-            item = _load_composite_geometry(i)
-            d_st_raw = item["d_st_raw"]
-            robot = item["robot"]
-            hole_bool = item["hole_bool"]
-            final_rgb = item["final_rgb"]
-            d_st = np.where(robot, d_st_raw, args.st_bg_depth).astype(np.float32)
-            used_scale = 1.0
-            if bg_vol is not None:
-                d_bg = item["d_bg"]
-                d_rel = d_bg
-                if args.no_scale:
-                    used_scale = 1.0
-                    d_nv = d_bg.astype(np.float32)
-                else:
-                    s = estimate_scale(d_bg, d_st_raw, hole_bool)
-                    if s is None and last_scale is not None:
-                        s = last_scale
-                    if s is None:
-                        d_nv = np.full((h0, w0), 1e3, dtype=np.float32)
-                        used_scale = None
-                    else:
-                        last_scale = s
-                        used_scale = s
-                        d_nv = (s * d_bg).astype(np.float32)
-                if not args.no_hole:
-                    d_nv[hole_bool] = args.hole_depth
-                use_st = d_st < d_nv
-            else:
-                if reuse_da3_vol is not None:
-                    d_rel = np.asarray(reuse_da3_vol[i], dtype=np.float32).squeeze()
-                    if d_rel.ndim != 2:
-                        raise RuntimeError(f"reused depth frame {i} must be HxW, got {d_rel.shape}")
-                elif args.reuse_da3_dir is not None:
-                    d_rel = np.asarray(
-                        np.load(args.reuse_da3_dir / f"{i:06d}.npy"), dtype=np.float32
-                    ).squeeze()
-                    if d_rel.ndim != 2:
-                        raise RuntimeError(f"reused depth frame {i} must be HxW, got {d_rel.shape}")
-                elif worker_da3:
-                    d_rel = np.asarray(da3_vol[i], dtype=np.float32).squeeze()
-                    if d_rel.ndim != 2:
-                        raise RuntimeError(f"worker depth frame {i} must be HxW, got {d_rel.shape}")
-                else:
-                    d_rel = da3_depth(
-                        model,
-                        final_rgb,
-                        args.process_res,
-                        fx=fx,
-                        fy=fy,
-                        metric_focal_div=metric_div,
-                    )
-                d_rel = resize_depth(d_rel, h0, w0)
-                if args.no_scale:
-                    used_scale = 1.0
-                    d_nv = d_rel.astype(np.float32)
-                else:
-                    s = estimate_scale(d_rel, d_st_raw, hole_bool)
-                    if s is None and last_scale is not None:
-                        s = last_scale
-                    if s is None:
-                        d_nv = np.full((h0, w0), 1e3, dtype=np.float32)
-                        used_scale = None
-                    else:
-                        last_scale = s
-                        used_scale = s
-                        d_nv = (s * d_rel).astype(np.float32)
-                if not args.no_hole:
-                    d_nv[hole_bool] = args.hole_depth
-                use_st = d_st < d_nv
+        use_st_b = paste_mask_mode_ab(
+            d_st_b,
+            d_bg_b,
+            robot_b,
+            hole_b,
+            paste_mode=args.paste_mode,
+            neighbor_depth=d_nb,
+            st_bg_depth=args.st_bg_depth,
+            device=paste_device,
+        )
+        for local, item in enumerate(items):
+            d_bg = item["d_bg"]
+            d_nv = np.where(
+                np.isfinite(d_bg) & (d_bg > 1e-6),
+                d_bg,
+                args.st_bg_depth,
+            ).astype(np.float32)
             _emit_composite_frame(
-                item, use_st=use_st, d_nv=d_nv, d_rel=d_rel, used_scale=used_scale
+                item,
+                use_st=np.asarray(use_st_b[local]),
+                d_nv=d_nv,
             )
-
     if writer is not None:
         writer.close()
     if rgb_out_vol is not None:
         rgb_out_vol.flush()
-    if da3_vol is not None:
-        da3_vol.flush()
     paste_vol.flush()
     robot_mask_vol.flush()
     provenance_vol.flush()
@@ -1244,12 +834,11 @@ def main() -> None:
         json.dumps(
             {
                 "policy": {
-                    "no_scale": bool(args.no_scale),
-                    "no_hole": bool(args.no_hole),
-                    "da3_model_dir": str(args.da3_model_dir),
-                    "metric_focal_div": metric_div,
-                    "fx": fx,
-                    "fy": fy,
+                    "no_scale": True,
+                    "depth_source": "source_rgbd_meters",
+                    "bg_depth_dir": str(args.bg_depth_dir.resolve()),
+                    "paste_mode": args.paste_mode,
+                    "neighbor_radius": args.neighbor_radius,
                     "robot_max_depth": args.robot_max_depth,
                     "robot_mask_dir": str(robot_mask_root) if robot_mask_root is not None else None,
                     "robot_mask_source": "object_id" if robot_mask_root is not None else "legacy_robot_mask",
@@ -1267,7 +856,6 @@ def main() -> None:
                         "robot": int(PROVENANCE_ROBOT),
                         "synthetic": 4,
                     },
-                    "hole_depth": args.hole_depth,
                     "st_bg_depth": args.st_bg_depth,
                     "depth_vis_vmin": args.depth_vis_vmin,
                     "depth_vis_vmax": args.depth_vis_vmax,

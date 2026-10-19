@@ -20,7 +20,7 @@ import numpy as np
 from PIL import Image
 
 from evaluate_hand_object_interaction import CupModel
-from mujoco_robot_id_capture import robot_geom_ids, robot_id_from_segmentation
+from koda.rendering.segmentation import robot_geom_ids, robot_id_from_segmentation
 from render_torso_robot_rgb_depth import (
     CAMERA_BODY_NAME,
     CAMERA_MOUNT_POS,

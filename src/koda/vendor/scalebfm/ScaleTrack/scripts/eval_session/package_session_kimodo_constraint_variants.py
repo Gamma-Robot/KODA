@@ -650,8 +650,11 @@ def _offline_wrist_fk_err(
 
         isaac_joints = list(json.loads(Path(ISAAC_ORDER_JSON).read_text())["joint_names"])
         mjcf = Path(os.environ.get(
-            "KODA_SPARSETRACK_MJCF",
-            KODA_HOME / "resources/SparseTrack/assets/g1_29dof_with_hand_st_collision.xml",
+            "KODA_G1_COLLISION_XML",
+            os.environ.get(
+                "KODA_SPARSETRACK_MJCF",  # Compatibility with existing local configs.
+                KODA_HOME / "resources/robots/g1_dex3/g1_29dof_with_hand_st_collision.xml",
+            ),
         ))
         model = mujoco.MjModel.from_xml_path(str(mjcf))
         data = mujoco.MjData(model)

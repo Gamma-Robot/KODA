@@ -272,7 +272,7 @@ requested inside the worker.
 
 ## Commands
 
-Production host commands (session conversion, Dex3/BrainCo view change, Sonic tracking, GR00T export, finetune) are in [`README.md`](README.md#production-pipeline-commands). Dry-run and layout checks:
+The public pipeline covers session conversion, whole-body and hand kinematics, and Dex3/BrainCo view synthesis. See [`README.md`](README.md#run-the-kinematics-and-video-pipeline) for the supported CLI. Controller action labels, token encoding, dataset export, and training remain outside this release. Dry-run and layout checks:
 
 ```bash
 # Validate paths and retarget contracts

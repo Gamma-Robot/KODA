@@ -43,12 +43,10 @@ class PersistentWorkerOrchestrationTest(unittest.TestCase):
         self.assertIn('"${KIMODO_PY}" "${KIMODO_WORKER}"', workers)
         self.assertNotIn('"${SCALER_PY}" "${KIMODO_WORKER}"', workers)
         self.assertIn("start_diffueraser_worker", workers)
-        self.assertIn("start_da3_worker", workers)
         self.assertIn("ensure_view_change_workers", workers)
         self.assertIn("run_phase_pool precompute", text)
         self.assertIn("run_phase_pool tracking", text)
         self.assertIn("KIMODO_WORKER_SOCK", text)
-        self.assertIn("DA3_WORKER_SOCK", text)
 
     def test_view_change_reuses_contact_human_masks(self) -> None:
         tracking = TRACKING.read_text(encoding="utf-8")
@@ -68,13 +66,11 @@ class PersistentWorkerOrchestrationTest(unittest.TestCase):
         self.assertIn('"mask_kind": "human_body"', masks)
         self.assertIn("source_adapter", batch)
 
-    def test_view_change_starts_deferred_da3_and_diffu(self) -> None:
+    def test_view_change_starts_deferred_diffu(self) -> None:
         tracking = TRACKING.read_text(encoding="utf-8")
         single = SINGLEFRAME.read_text(encoding="utf-8")
         self.assertIn("LOG_ROOT", tracking)
-        self.assertIn("DA3_WORKER_SOCK", tracking)
         self.assertIn("ensure_resident_view_workers", single)
-        self.assertIn("DA3_WORKER_SOCK", single)
         sweep = (
             PROJECT_ROOT
             / "resources/ScaleBFM/ScaleTrack/scripts/eval_session/run_clean_kimodo_init_sweep.py"

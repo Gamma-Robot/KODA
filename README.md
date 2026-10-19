@@ -4,22 +4,24 @@
 
 KODA is a data conversion framework for turning human egocentric demonstrations into reusable, controller-specific whole-body training data for humanoid loco-manipulation.
 
-The project aligns human observations, head and hand motion cues, robot states, compatible actions, and task instructions on a shared control clock. Its conversion pipeline produces simulation-feasible whole-body motion, motion-aligned robot onboard views, and controller-specific state–action records that can be combined with real-robot demonstrations to train vision–language–action (VLA) policies.
+The research framework aligns human observations, head and hand motion cues, robot states, compatible actions, and task instructions on a shared control clock. It targets simulation-feasible whole-body motion, motion-aligned robot onboard views, and controller-specific state–action records for vision–language–action (VLA) policies.
+
+**This public release provides robot kinematics and motion-aligned onboard video.** It includes conversion, hand processing, whole-body motion generation, and view synthesis. Controller action labels, SONIC token encoding, GR00T dataset export, and policy training are outside the current release.
 
 ---
 
 ## Overview
 
-KODA converts a human egocentric demonstration into controller-specific whole-body training data in four steps:
+The full research workflow has four steps. This repository currently provides capture conversion and robot kinematics/video generation; controller alignment and policy training are planned for future public releases.
 
 | Step | Name | What happens |
 | :---: | :--- | :--- |
 | **01** | **Capture** — *Observe the task* | Record the human viewpoint, hand and head cues, and language goal with the demonstration. |
 | **02** | **Convert** — *Recover whole-body motion* | Map visual motion into robot motion and robot views while preserving the original task context. |
-| **03** | **Align** — *Instantiate the interface* | Project states and actions onto the target controller's compatible action space and control clock. |
-| **04** | **Train** — *Fine-tune the policy* | Combine KODA records with robot demonstrations to train a controller-specific whole-body VLA. |
+| **03** | **Align** — *Instantiate the interface* | Future release: project states and actions onto the target controller's compatible action space and control clock. |
+| **04** | **Train** — *Fine-tune the policy* | Future release: combine KODA records with robot demonstrations to train a controller-specific whole-body VLA. |
 
-> Every training record keeps robot observations, whole-body states, compatible actions, and task instruction together, so later debugging can follow the same path as training.
+> The research dataset design keeps robot observations, whole-body states, compatible actions, and task instructions together. The current code produces the kinematics and video inputs to that later dataset construction stage.
 
 ---
 
@@ -27,7 +29,7 @@ KODA converts a human egocentric demonstration into controller-specific whole-bo
 
 ![KODA pipeline](docs/pipeline.png)
 
-*Overview of the KODA conversion pipeline. The figure shows the human RGB-D inputs, whole-body motion generation, robot onboard-view synthesis, and controller-aligned VLA records.*
+*Overview of the full KODA research pipeline. This release covers whole-body motion generation and robot onboard-view synthesis. Controller-aligned VLA records are planned for a future public release.*
 
 ### 1. Whole-Body Motion Generation
 
@@ -48,13 +50,13 @@ Given the human RGB / depth images, camera pose, and the generated robot motion,
 - **Depth Compositing** – compose the rendered robot with the observed scene by depth.
 - **Inpainting** – inpaint the occluded regions to obtain the final onboard view.
 
-### 3. Control Command Generation
+### 3. Control Command Generation (future release)
 
-Whole-body motion is converted into executable commands via **sampling-based command optimization**, producing the controller-specific actions aligned to the shared control clock.
+The research pipeline converts whole-body motion into executable commands via **sampling-based command optimization**, producing controller-specific actions aligned to the shared control clock. Our action-label generation implementation is based on [bfm_ttc](https://github.com/Gamma-Robot/bfm_ttc). The KODA-specific action-label generation code is not included in this public release; its release is planned under **M3**.
 
-### 4. Humanoid VLA Dataset
+### 4. Humanoid VLA Dataset (future release)
 
-The output dataset combines, on a shared control clock:
+The research dataset design combines, on a shared control clock:
 
 - 📷 **Robot Onboard View** — motion-aligned, simulation-rendered onboard images.
 - 🤖 **Robot States & Actions** — controller-compatible state–action records.
@@ -64,20 +66,20 @@ The output dataset combines, on a shared control clock:
 
 ## Open-Source Timeline
 
-The implementation from the internal KODA pipeline has been staged in this repository. The table below records what is available here and what remains outside this release:
+The public portions of the internal KODA pipeline are included in this repository. The table below records what is available here and what remains outside this release:
 
 | Phase | Milestone | Deliverables | Status |
 | :---: | :--- | :--- | :---: |
 | 🚀 **M0** | **Project launch** | Project page, paper, and this repository | ✅ Done |
 | 🧩 **M1** | **Core conversion pipeline** | RGB-D/MCAP conversion, hand pose estimation, hand retargeting, contact-aware refinement, SCO tracking, and arm refinement | ✅ Done |
 | 🎥 **M2** | **Onboard view generation** | Arm segmentation, point-cloud reprojection, robot rendering, depth compositing, and inpainting | ✅ Done |
-| 🎛️ **M3** | **Command generation & alignment** | SONIC motion-token export and GR00T-compatible state/action records; the complete HEFT command-generation path is not included yet | 🚧 Partial |
+| 🎛️ **M3** | **Command generation & alignment** | Controller action labels, motion-token encoding, and controller-aligned dataset export | 🔜 Planned |
 | 🗃️ **M4** | **Data release** | Reproducible data-processing tools and one public example MCAP through `TeleEmbodied/koda-assets` | 🚧 Partial |
 | 🤖 **M5** | **Training & model details** | Controller-specific whole-body VLA training configs and model details | 🔜 Planned |
 
 > **Status legend:** ✅ Done · 🚧 Partial or in progress · 🔜 Planned
 
-This release includes the hand-processing code, including MANO/HaWoR hand estimation, BrainCo and Dex3 retargeting, contact-aware hand refinement, and hand–object geometric contact handling. The default runnable path is G1 + Dex3 + SONIC and ends at a GR00T-compatible dataset export. HEFT-specific controller replay/export and the training configurations used for the paper remain future work.
+This release includes the hand-processing code, including MANO/HaWoR hand estimation, BrainCo and Dex3 retargeting, contact-aware hand refinement, and hand–object geometric contact handling. The default runnable path uses G1 + Dex3 and ends with robot kinematics and synthesized onboard video. Controller replay, action/token generation, dataset export, and the training configurations used for the paper are planned for future public releases.
 
 ---
 
@@ -87,7 +89,6 @@ This release includes the hand-processing code, including MANO/HaWoR hand estima
 - Python 3.10–3.12
 - [uv](https://docs.astral.sh/uv/)
 - Storage for the model files; DiffuEraser's Stable Diffusion base alone is several GB
-- IsaacLab/IsaacSim only for the optional GR00T fine-tuning stage
 
 ## Install
 
@@ -108,7 +109,7 @@ uv run koda assets download --profile smoke
 uv run koda assets verify --profile smoke
 ```
 
-For the complete data pipeline, start the automatic downloads:
+For all stages in the public kinematics and video pipeline, start the automatic downloads:
 
 ```bash
 uv run koda assets download --profile full
@@ -128,7 +129,7 @@ The manual assets are:
 
 All other model sources, revisions, destination paths, and required markers are recorded in the manifest. You may set `KODA_HAWOR_DIR` or `KODA_SCALEBFM_CHECKPOINT` to another user-owned checkout or checkpoint; no default points outside the repository.
 
-## Run the complete data pipeline
+## Run the kinematics and video pipeline
 
 ```bash
 uv run koda run \
@@ -143,21 +144,10 @@ Use `--frames 30` for a short smoke prefix. A successful run produces:
 - `converted/`: MCAP-derived RGB-D and hand observations
 - `tracking/`: 29-DoF G1 body plus 14-DoF Dex3 kinematics
 - `view_change/`: fixed-camera RGB-D, robot render, and inpainted video
-- `groot/`: SONIC tokens and the GR00T-compatible LeRobot dataset
 - `run_manifest.json`: every stage command, log path, and return code
 - `pipeline_result.json`: final output locations
 
-The data pipeline ends at the GR00T dataset export. `koda finetune` is an optional adapter that runs a user-supplied IsaacLab/IsaacSim command:
-
-```bash
-KODA_FINETUNE_COMMAND='...' uv run koda finetune \
-  --input outputs/example/groot \
-  --output outputs/example \
-  --config configs/default.yaml \
-  --gpu 0
-```
-
-The command receives `KODA_DATASET` and `KODA_OUTPUT`. IsaacLab/IsaacSim is intentionally not vendored because it is a separate runtime with its own installation and license.
+`koda run` finishes after view synthesis. The individual stages are also available as `koda convert`, `koda track`, and `koda view-change`. The public CLI has no action-label, token-encoding, dataset-export, or training stage.
 
 ## Checks
 

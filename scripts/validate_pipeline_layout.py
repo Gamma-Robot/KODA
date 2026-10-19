@@ -61,7 +61,16 @@ def main() -> None:
         PROJECT_ROOT / "resources/brainco/configs/retarget/brainco_hand_right.yml",
         PROJECT_ROOT / "resources/ScaleBFM",
         PROJECT_ROOT / "resources/hydrax",
-        PROJECT_ROOT / "resources/SparseTrack",
+        PROJECT_ROOT / "src/koda/retargeting/dex3.py",
+        PROJECT_ROOT / "src/koda/retargeting/evaluation.py",
+        PROJECT_ROOT / "src/koda/retargeting/configs/unitree_dex3_position.yml",
+        PROJECT_ROOT / "src/koda/kinematics/compose.py",
+        PROJECT_ROOT / "src/koda/kinematics/dex3.py",
+        PROJECT_ROOT / "src/koda/ik/mink_wrist.py",
+        PROJECT_ROOT / "src/koda/ik/wrist.py",
+        PROJECT_ROOT / "src/koda/rendering/segmentation.py",
+        PROJECT_ROOT / "resources/robots/g1_dex3/g1_with_visual_dex3_hands.xml",
+        PROJECT_ROOT / "resources/robots/g1_dex3/g1_29dof_with_hand_st_collision.xml",
         PROJECT_ROOT / "resources/DiffuEraser",
     ]
     for path in required:
@@ -109,10 +118,10 @@ def main() -> None:
         / "resources/brainco/robots/g1_brainco/g1_mocap_29dof_with_brainco_hands.xml"
     ).read_text()
     compose_render = (
-        PROJECT_ROOT / "resources/SparseTrack/scripts/compose_dex3_kinematics.py"
+        PROJECT_ROOT / "src/koda/kinematics/compose.py"
     ).read_text()
     render_utils = (
-        PROJECT_ROOT / "resources/SparseTrack/scripts/dex3_kinematics_utils.py"
+        PROJECT_ROOT / "src/koda/kinematics/dex3.py"
     ).read_text()
     extract_hand = (
         PROJECT_ROOT / "scripts/view_change/extract_hand_archive.py"
@@ -185,7 +194,7 @@ def main() -> None:
             "RETARGET_TYPE" not in batch
             and "LEFT_WRIST_YAW_OFFSET_DEG" not in batch
             and "RIGHT_WRIST_YAW_OFFSET_DEG" not in batch
-            and "egodex_to_dex3_hand_qpos.py" not in single_view
+            and "koda.retargeting.dex3" not in single_view
             and "offset_kinematics_joint.py" not in single_view
         ),
         "no_external_pipeline_code_entry": (

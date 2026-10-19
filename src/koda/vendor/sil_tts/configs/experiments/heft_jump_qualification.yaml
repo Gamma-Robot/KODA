@@ -1,8 +1,0 @@
-ref: experiments/cross_tracker_low_budget.base.yaml
-
-name: heft_jump_qualification
-tracker:
-  ref: trackers/heft_pmg.yaml
-target:
-  motion_id: jump
-  clip_duration_seconds: 0.4

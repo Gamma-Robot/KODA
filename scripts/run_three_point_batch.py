@@ -92,39 +92,11 @@ ARTIFACT_DIR = HYDRAX / "scripts/pi_mjx_sim2sim/artifacts"
 ARTIFACT_MANIFEST = ARTIFACT_DIR / "artifact_manifest.json"
 CHECKPOINT = Path(os.environ.get("KODA_SCALEBFM_CHECKPOINT", str(ASSET_ROOT / "models/scalebfm/model_22200.pt"))).resolve()
 MPC_BACKEND_JAX = "jax"
-MPC_BACKEND_SIL_TTS = "sil-tts"
-SIL_TTS_ROOT = RESOURCE_ROOT / "sil_tts"
-SIL_TTS_EXPERIMENT = (
-    SIL_TTS_ROOT / "configs/experiments/scalebfm_torso_umi3_ego2humanoid.yaml"
-)
 JAX_RUN_NAME = "jax_mpc_3point_n256_h36_i4_x12_seed2"
 JAX_PIPELINE_CONFIG_ID = (
     "torso_umi3_model22200_n256_h36_i4_x12_seed2_"
     "full50_template_palm_joint_contact_savgol_mink_v6"
 )
-SIL_TTS_RUN_NAME = "sil_tts_scalebfm_k10_h40_x20"
-SIL_TTS_PIPELINE_CONFIG_ID = (
-    "torso_umi3_model22200_sil_tts_k10_h40_x20_"
-    "full50_template_palm_joint_contact_savgol_mink_v6"
-)
-SIL_TTS_EXPERIMENT_RELATIVE = Path(
-    "configs/experiments/scalebfm_torso_umi3_ego2humanoid.yaml"
-)
-SIL_TTS_TRACKER_CONFIG = SIL_TTS_ROOT / "configs/trackers/scalebfm_torso_umi3.yaml"
-SIL_TTS_MOTION_TRACKING_CONFIG = (
-    SIL_TTS_ROOT / "configs/motion_tracking/scalebfm_torso_umi3.yaml"
-)
-SIL_TTS_LOCK = SIL_TTS_ROOT / "artifacts/lock.v1.json"
-SIL_TTS_TRACKER_ARTIFACT_ID = "scalebfm-torso-umi3-policy.batched"
-SIL_TTS_PLANNING = {
-    "num_knots": 10,
-    "horizon_steps": 40,
-    "execution_chunk_steps": 20,
-    "num_candidates": 80,
-    "num_iterations": 8,
-    "num_elites": 9,
-    "seed": 47,
-}
 RUN_NAME = JAX_RUN_NAME
 PIPELINE_CONFIG_ID = JAX_PIPELINE_CONFIG_ID
 FINAL_FILES = ("kinematics.npz", "meta.json", "tracking_error.json")
@@ -153,7 +125,6 @@ KIMODO_G1_REST_POSE = (
 )
 KIMODO_TEXT_ENCODERS = Path(os.environ.get("KODA_KIMODO_TEXT_ENCODERS", str(ASSET_ROOT / "models/kimodo/text_encoders"))).resolve()
 MOTION_SCHEMA_TEMPLATE = RESOURCE_ROOT / "motion_schema_template.npz"
-MINK_SOLVER_BYTECODE = RESOURCE_ROOT / "SparseTrack/scripts/st_mink_wrist_ik.py"
 ACTIVE_PROCESSES: dict[int, tuple[subprocess.Popen, Any]] = {}
 ACTIVE_PROCESSES_LOCK = threading.Lock()
 STOP_REQUESTED = threading.Event()
@@ -548,21 +519,6 @@ def hash_dependency_path(path: Path) -> dict[str, Any]:
     }
 
 
-def configure_mpc_backend(backend: str) -> str:
-    """Select publish identities so JAX and sil-tts outputs do not collide."""
-
-    global RUN_NAME, PIPELINE_CONFIG_ID
-    if backend == MPC_BACKEND_SIL_TTS:
-        RUN_NAME = SIL_TTS_RUN_NAME
-        PIPELINE_CONFIG_ID = SIL_TTS_PIPELINE_CONFIG_ID
-        return backend
-    if backend == MPC_BACKEND_JAX:
-        RUN_NAME = JAX_RUN_NAME
-        PIPELINE_CONFIG_ID = JAX_PIPELINE_CONFIG_ID
-        return backend
-    raise ValueError(f"unsupported mpc backend: {backend}")
-
-
 def build_dependency_manifest(
     paths: dict[str, Path],
     extra_payload: dict[str, Any] | None = None,
@@ -591,10 +547,7 @@ def build_dependency_manifest(
     }
 
 
-def pipeline_dependency_manifest(
-    *,
-    mpc_backend: str = MPC_BACKEND_JAX,
-) -> dict[str, Any]:
+def pipeline_dependency_manifest() -> dict[str, Any]:
     diagnostics = HYDRAX / "scripts/pi_mjx_sim2sim/diagnostics"
     scripts = HYDRAX / "scripts/pi_mjx_sim2sim"
     eval_scripts = ST / "scripts/eval_session"
@@ -612,8 +565,14 @@ def pipeline_dependency_manifest(
             PROJECT_ROOT / "scripts/view_change/hand_retarget_experiment.py"
         ),
         "joint_contact_dex3_position_retarget": (
-            RESOURCE_ROOT / "SparseTrack/scripts/egodex_to_dex3_hand_qpos.py"
+            PROJECT_ROOT / "src/koda/retargeting/dex3.py"
         ),
+        "joint_contact_dex3_retarget_config": (
+            PROJECT_ROOT / "src/koda/retargeting/configs/unitree_dex3_position.yml"
+        ),
+        "joint_contact_dex3_evaluation": PROJECT_ROOT / "src/koda/retargeting/evaluation.py",
+        "joint_contact_dex3_kinematics": PROJECT_ROOT / "src/koda/kinematics/dex3.py",
+        "joint_contact_dex3_xml": RESOURCE_ROOT / "robots/g1_dex3/g1_with_visual_dex3_hands.xml",
         "joint_contact_object_mask_selector": (
             PROJECT_ROOT / "scripts/view_change/select_contact_mask_window.py"
         ),
@@ -685,8 +644,8 @@ def pipeline_dependency_manifest(
         "policy_numeric_implementation": scripts / "_onboard_policy_lib.py",
         "mjx_g1_xml": MJX_G1_XML,
         "mink_refinement": MINK_REFINE,
-        "mink_solver_shim": RESOURCE_ROOT / "SparseTrack/scripts/st_mink_wrist_ik.py",
-        "mink_solver_bytecode": MINK_SOLVER_BYTECODE,
+        "mink_solver": PROJECT_ROOT / "src/koda/ik/mink_wrist.py",
+        "mink_joint_helpers": PROJECT_ROOT / "src/koda/ik/wrist.py",
         "tracking_summary": SUMMARIZE,
         "tracking_metric_helpers": eval_scripts / "compare_torso_umi3_tracking.py",
     }
@@ -722,33 +681,19 @@ def pipeline_dependency_manifest(
         ):
             label = encoder_file.relative_to(KIMODO_TEXT_ENCODERS).as_posix()
             paths[f"kimodo_text_encoder/{label}"] = encoder_file
-    # MuJoCo re-centers mesh geoms at compile time, so the BrainCo palm frames
-    # that seed the hand refinement depend on the mesh files themselves.
+    # MuJoCo re-centers mesh geoms at compile time, so the palm frames that
+    # seed hand refinement depend on the mesh files themselves.
     for assets_root, prefix in (
         (SCALETRACK_G1_ASSETS / "meshes", "scaletrack_mesh"),
         (MJX_G1_ASSETS / "meshes", "mjx_mesh"),
+        (RESOURCE_ROOT / "robots/g1_dex3", "dex3_asset"),
         (BRAINCO_MESHES, "brainco_mesh"),
         (BRAINCO_ROOT / "robots/g1_base/meshes", "brainco_base_mesh"),
     ):
         for asset in sorted(item for item in assets_root.rglob("*") if item.is_file()):
             label = asset.relative_to(assets_root).as_posix()
             paths[f"{prefix}/{label}"] = asset
-    extra_payload = None
-    if mpc_backend == MPC_BACKEND_SIL_TTS:
-        paths["sil_tts_experiment"] = SIL_TTS_EXPERIMENT
-        paths["sil_tts_tracker"] = SIL_TTS_TRACKER_CONFIG
-        paths["sil_tts_motion_tracking"] = SIL_TTS_MOTION_TRACKING_CONFIG
-        paths["sil_tts_lock"] = SIL_TTS_LOCK
-        extra_payload = {
-            "mpc_backend": MPC_BACKEND_SIL_TTS,
-            "planning": {
-                "num_knots": SIL_TTS_PLANNING["num_knots"],
-                "horizon_steps": SIL_TTS_PLANNING["horizon_steps"],
-                "execution_chunk_steps": SIL_TTS_PLANNING["execution_chunk_steps"],
-            },
-            "sil_tts_tracker_artifact": SIL_TTS_TRACKER_ARTIFACT_ID,
-        }
-    return build_dependency_manifest(paths, extra_payload=extra_payload)
+    return build_dependency_manifest(paths)
 
 
 def atomic_json(path: Path, payload: dict[str, Any]) -> None:
@@ -1916,101 +1861,6 @@ def run_jax_cem_mpc(
         )
 
 
-def convert_sil_tts_output_to_jax_layout(
-    *,
-    sil_output_dir: Path,
-    run_dir: Path,
-    reference: Path,
-    init_state: Path,
-) -> None:
-    """Copy SIL ScaleTrack kinematics into the Mink/publish jax_mpc layout."""
-
-    source_npz = sil_output_dir / "scaletrack_kinematics.npz"
-    source_meta = sil_output_dir / "meta.json"
-    if not source_npz.is_file() or not source_meta.is_file():
-        raise StageError(
-            "sil_tts_mpc",
-            f"sil-tts did not write ScaleTrack kinematics in {sil_output_dir}",
-        )
-    kinematics_dir = run_dir / "kinematics"
-    kinematics_dir.mkdir(parents=True, exist_ok=True)
-    destination_npz = kinematics_dir / f"{RUN_NAME}_kinematics.npz"
-    destination_meta = kinematics_dir / "meta.json"
-    destination_summary = run_dir / f"{RUN_NAME}_summary.json"
-    shutil.copy2(source_npz, destination_npz)
-    shutil.copy2(source_meta, destination_meta)
-    with np.load(destination_npz, allow_pickle=False) as data:
-        frames = int(np.asarray(data["joint_pos"]).shape[0])
-        fps = float(np.asarray(data["fps"]).reshape(()))
-    summary = {
-        "status": "completed",
-        "mpc_backend": MPC_BACKEND_SIL_TTS,
-        "setting": {
-            "motion_file": str(reference),
-            "init_state_npz": str(init_state),
-            "sil_tts_experiment": str(SIL_TTS_EXPERIMENT),
-            "sil_tts_output": str(sil_output_dir),
-            "recorded_frames": frames,
-            "control_steps": max(frames - 1, 0),
-            "fps": fps,
-            **SIL_TTS_PLANNING,
-        },
-        "kinematics": {
-            "npz": str(destination_npz),
-            "meta": str(destination_meta),
-        },
-    }
-    destination_summary.write_text(json.dumps(summary, indent=2) + "\n")
-
-
-def run_sil_tts_mpc(
-    *,
-    reference: Path,
-    init_state: Path,
-    run_dir: Path,
-    env: dict[str, str],
-    log_path: Path,
-    timeout_s: float | None,
-) -> None:
-    if not SIL_TTS_EXPERIMENT.is_file():
-        raise FileNotFoundError(f"missing sil-tts experiment: {SIL_TTS_EXPERIMENT}")
-    sil_output = run_dir / "sil_tts"
-    command = [
-        "uv",
-        "run",
-        "--extra",
-        "scalebfm",
-        "sil-tts",
-        "run-scalebfm-session",
-        str(SIL_TTS_EXPERIMENT_RELATIVE),
-        "--reference-npz",
-        reference,
-        "--init-state-npz",
-        init_state,
-        "--output-dir",
-        sil_output,
-        "--device-index",
-        "0",
-        "--disable-visualization",
-    ]
-    sil_env = dict(env)
-    sil_env["MUJOCO_GL"] = "egl"
-    run_stage(
-        "sil_tts_mpc",
-        command,
-        cwd=SIL_TTS_ROOT,
-        env=sil_env,
-        log_path=log_path,
-        timeout_s=timeout_s,
-    )
-    convert_sil_tts_output_to_jax_layout(
-        sil_output_dir=sil_output,
-        run_dir=run_dir,
-        reference=reference,
-        init_state=init_state,
-    )
-
-
 def read_reference_shape(path: Path) -> tuple[int, float]:
     with np.load(path, allow_pickle=False) as data:
         frames = int(np.asarray(data["body_pos_w"]).shape[0])
@@ -2641,7 +2491,6 @@ def run_session(
     hand_mode: str = HAND_MODE_DEX3,
     jax_mpc_socks: dict[str, str] | None = None,
     max_gap_frames: int = 10,
-    mpc_backend: str = MPC_BACKEND_JAX,
 ) -> JobResult:
     started = time.monotonic()
     gpu: str | None = None
@@ -3186,31 +3035,18 @@ def run_session(
                     "Kimodo Seed 02 init failed its IK/physics gate",
                 )
 
-        if mpc_backend == MPC_BACKEND_SIL_TTS:
-            current_stage = "sil_tts_mpc"
-            run_sil_tts_mpc(
-                reference=reference,
-                init_state=init_state,
-                run_dir=run_dir,
-                env=env,
-                log_path=log_path,
-                timeout_s=stage_timeout_s,
-            )
-            missing_label = "sil-tts MPC"
-        else:
-            current_stage = "jax_cem_mpc"
-            run_jax_cem_mpc(
-                reference=reference,
-                init_state=init_state,
-                run_dir=run_dir,
-                env=env,
-                log_path=log_path,
-                timeout_s=stage_timeout_s,
-            )
-            missing_label = "JAX MPC"
+        current_stage = "jax_cem_mpc"
+        run_jax_cem_mpc(
+            reference=reference,
+            init_state=init_state,
+            run_dir=run_dir,
+            env=env,
+            log_path=log_path,
+            timeout_s=stage_timeout_s,
+        )
         for path in (raw_kinematics, raw_metadata, raw_summary):
             if not path.is_file():
-                raise StageError(current_stage, f"missing {missing_label} output: {path}")
+                raise StageError(current_stage, f"missing JAX MPC output: {path}")
 
         current_stage = "mink_arm_refinement"
         mink_returncode = run_stage(
@@ -3328,12 +3164,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gpus", default="auto")
     parser.add_argument(
         "--mpc-backend",
-        choices=(MPC_BACKEND_JAX, MPC_BACKEND_SIL_TTS),
+        choices=(MPC_BACKEND_JAX,),
         default=MPC_BACKEND_JAX,
-        help=(
-            "MPC after Kimodo Seed 02. jax keeps Hydrax fragment-knot CEM; "
-            "sil-tts runs ScaleBFM true-knot SIL and skips JAX workers."
-        ),
+        help="Hydrax JAX fragment-knot CEM after Kimodo Seed 02 (only supported backend).",
     )
     parser.add_argument("--workers", type=int)
     parser.add_argument("--min-free-gpu-mb", type=int, default=18000)
@@ -3563,7 +3396,7 @@ def build_reference_smoothing_options(
 
 def main() -> None:
     args = parse_args()
-    mpc_backend = configure_mpc_backend(args.mpc_backend)
+    mpc_backend = args.mpc_backend
     input_root = args.input_root.expanduser().resolve()
     output_root = args.output_root.expanduser().resolve()
     work_root = args.work_root.expanduser().resolve()
@@ -3763,7 +3596,7 @@ def main() -> None:
     if global_log.is_file() and artifact_manifest_valid(ARTIFACT_MANIFEST):
         global_log.unlink()
     artifact_manifest_hash = sha256(ARTIFACT_MANIFEST)
-    dependency_manifest = pipeline_dependency_manifest(mpc_backend=mpc_backend)
+    dependency_manifest = pipeline_dependency_manifest()
     pipeline_dependency_hash = dependency_manifest["sha256"]
 
     started_at = utc_now()
@@ -3873,28 +3706,12 @@ def main() -> None:
                 "mpc_backend": mpc_backend,
                 "sequence_policy": "complete source sequence resampled to 50 Hz",
                 "checkpoint": str(CHECKPOINT),
-                **(
-                    {
-                        "N": SIL_TTS_PLANNING["num_candidates"],
-                        "H": SIL_TTS_PLANNING["horizon_steps"],
-                        "cem_iterations": SIL_TTS_PLANNING["num_iterations"],
-                        "elite": SIL_TTS_PLANNING["num_elites"],
-                        "execute_steps": SIL_TTS_PLANNING["execution_chunk_steps"],
-                        "num_knots": SIL_TTS_PLANNING["num_knots"],
-                        "seed": SIL_TTS_PLANNING["seed"],
-                        "sil_tts_experiment": str(SIL_TTS_EXPERIMENT),
-                        "sil_tts_tracker_artifact": SIL_TTS_TRACKER_ARTIFACT_ID,
-                    }
-                    if mpc_backend == MPC_BACKEND_SIL_TTS
-                    else {
-                        "N": 256,
-                        "H": 36,
-                        "cem_iterations": 4,
-                        "elite": 10,
-                        "execute_steps": 12,
-                        "seed": 2,
-                    }
-                ),
+                "N": 256,
+                "H": 36,
+                "cem_iterations": 4,
+                "elite": 10,
+                "execute_steps": 12,
+                "seed": 2,
                 "mink_arm_refinement": True,
                 "hand_mode": hand_mode,
                 "orientation_offset_root": (
@@ -3941,30 +3758,24 @@ def main() -> None:
     jax_workers: list[JaxMpcWorkerHandle] = []
     jax_mpc_socks: dict[str, str] = {}
     if pending:
-        if mpc_backend == MPC_BACKEND_JAX:
-            parent_sock = os.environ.get("JAX_MPC_WORKER_SOCK", "").strip()
-            if parent_sock:
-                print(f"jax_mpc_worker=external_socket sock={parent_sock}", flush=True)
-                for gpu in selected_gpus:
-                    jax_mpc_socks[gpu.selector] = parent_sock
-            else:
-                print(
-                    "jax_mpc_worker=starting "
-                    + ",".join(gpu.selector for gpu in selected_gpus),
-                    flush=True,
-                )
-                jax_workers = start_jax_mpc_workers(
-                    [gpu.selector for gpu in selected_gpus],
-                    work_root=work_root,
-                    cpu_threads=args.cpu_threads_per_worker,
-                )
-                jax_mpc_socks = {handle.gpu: str(handle.sock) for handle in jax_workers}
-                atexit.register(stop_jax_mpc_workers, jax_workers)
+        parent_sock = os.environ.get("JAX_MPC_WORKER_SOCK", "").strip()
+        if parent_sock:
+            print(f"jax_mpc_worker=external_socket sock={parent_sock}", flush=True)
+            for gpu in selected_gpus:
+                jax_mpc_socks[gpu.selector] = parent_sock
         else:
             print(
-                f"jax_mpc_worker=skipped mpc_backend={mpc_backend}",
+                "jax_mpc_worker=starting "
+                + ",".join(gpu.selector for gpu in selected_gpus),
                 flush=True,
             )
+            jax_workers = start_jax_mpc_workers(
+                [gpu.selector for gpu in selected_gpus],
+                work_root=work_root,
+                cpu_threads=args.cpu_threads_per_worker,
+            )
+            jax_mpc_socks = {handle.gpu: str(handle.sock) for handle in jax_workers}
+            atexit.register(stop_jax_mpc_workers, jax_workers)
         gpu_slots: queue.Queue[str] = queue.Queue()
         for gpu in selected_gpus:
             gpu_slots.put(gpu.selector)
@@ -3998,7 +3809,6 @@ def main() -> None:
                         hand_mode=hand_mode,
                         jax_mpc_socks=jax_mpc_socks,
                         max_gap_frames=int(args.max_gap_frames),
-                        mpc_backend=mpc_backend,
                     ): session.session_id
                     for session in pending
                 }

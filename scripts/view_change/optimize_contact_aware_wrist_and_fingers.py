@@ -468,7 +468,7 @@ def main() -> None:
         hand50["right_qpos"] = q50[:, 6:].astype(np.float32)
         hand50["left_qvel"] = qvel[:, :6]
         hand50["right_qvel"] = qvel[:, 6:]
-    # compose_dex3_kinematics.py treats `joint_names` as the hand schema when
+    # koda.kinematics.compose treats `joint_names` as the hand schema when
     # it is present.  The base whole-body archive also carries a 43-joint
     # `joint_names`, so make this override unambiguously a hand archive while
     # retaining the auxiliary metadata above for provenance.

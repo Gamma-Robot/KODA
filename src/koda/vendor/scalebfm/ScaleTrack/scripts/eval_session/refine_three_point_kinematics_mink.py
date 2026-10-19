@@ -24,11 +24,11 @@ import numpy as np
 
 
 PROJECT_ROOT = Path(os.environ.get("KODA_HOME", str(Path(__file__).resolve().parents[7])))
-SPARSETRACK_SCRIPTS = PROJECT_ROOT / "resources" / "SparseTrack" / "scripts"
-if str(SPARSETRACK_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(SPARSETRACK_SCRIPTS))
+KODA_SRC = PROJECT_ROOT / "src"
+if str(KODA_SRC) not in sys.path:
+    sys.path.insert(0, str(KODA_SRC))
 
-from st_mink_wrist_ik import (  # noqa: E402
+from koda.ik.mink_wrist import (  # noqa: E402
     ARMS_ONLY,
     MinkDualWristIK,
     build_model_qpos,

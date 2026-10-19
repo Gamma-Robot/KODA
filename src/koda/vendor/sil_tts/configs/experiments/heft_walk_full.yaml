@@ -1,8 +1,0 @@
-ref: experiments/cross_tracker_low_budget.base.yaml
-
-name: heft_walk_full
-tracker:
-  ref: trackers/heft_pmg.yaml
-target:
-  motion_id: walk
-  clip_duration_seconds: 246.62

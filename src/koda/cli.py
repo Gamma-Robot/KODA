@@ -3,11 +3,11 @@ import argparse, json, os
 from pathlib import Path
 from . import __version__
 from .assets import download, verify
-from .orchestrator import PipelineContext, convert, export_groot, finetune, load_config, run_pipeline, track, view_change
+from .orchestrator import PipelineContext, convert, load_config, run_pipeline, track, view_change
 from .validation import validate
 
 def _parser():
-    parser = argparse.ArgumentParser(prog="koda", description="KODA humanoid data pipeline")
+    parser = argparse.ArgumentParser(prog="koda", description="KODA robot kinematics and onboard-video pipeline")
     parser.add_argument("--version", action="version", version=__version__)
     sub = parser.add_subparsers(dest="command", required=True)
     assets = sub.add_parser("assets"); asset_sub = assets.add_subparsers(dest="assets_command", required=True)
@@ -16,7 +16,7 @@ def _parser():
     val = sub.add_parser("validate"); val.add_argument("--profile", default="smoke")
     def stage(name):
         p = sub.add_parser(name); p.add_argument("--input", type=Path, required=True); p.add_argument("--output", type=Path, required=True); p.add_argument("--config", type=Path, default=Path("configs/default.yaml")); p.add_argument("--frames", type=int); p.add_argument("--gpu", default=os.environ.get("CUDA_VISIBLE_DEVICES", "0")); return p
-    for name in ("convert", "track", "view-change", "export-groot", "finetune"): stage(name)
+    for name in ("convert", "track", "view-change"): stage(name)
     run = sub.add_parser("run"); run.add_argument("--input", type=Path, required=True); run.add_argument("--output", type=Path, required=True); run.add_argument("--config", type=Path, default=Path("configs/default.yaml")); run.add_argument("--frames", type=int); run.add_argument("--gpu", default=os.environ.get("CUDA_VISIBLE_DEVICES", "0"))
     return parser
 
@@ -40,8 +40,6 @@ def main(argv=None):
     converted = ctx.input_path
     if args.command == "track": print(track(ctx, converted)); return 0
     if args.command == "view-change": print(view_change(ctx, converted, ctx.output_root / "tracking" / converted.name)); return 0
-    if args.command == "export-groot": print(export_groot(ctx, converted)); return 0
-    if args.command == "finetune": print(finetune(ctx, converted)); return 0
     raise AssertionError(args.command)
 
 if __name__ == "__main__": raise SystemExit(main())

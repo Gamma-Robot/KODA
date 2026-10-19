@@ -31,7 +31,7 @@ SOURCE_RGB_K="${SOURCE_RGB_K:-${SESSION}/calibrations/rgb_K.npy}"
 SOURCE_RGB_DIR="${SOURCE_RGB_DIR:-}"
 TARGET_CAMERA_CALIBRATION="${TARGET_CAMERA_CALIBRATION:-${PROJECT_ROOT}/scripts/view_change/configs/target_camera_672x376.json}"
 SCRIPTS="${PROJECT_ROOT}/scripts/view_change"
-SPARSE_SCRIPTS="${RESOURCE_ROOT}/SparseTrack/scripts"
+KODA_SRC="${PROJECT_ROOT}/src"
 # dex3 renders the visual Dex3 hands. g1_brainco renders the BrainCo hands from
 # the same 29-DoF body, so only the hand model and its mesh root change here.
 HAND_MODE="${HAND_MODE:-dex3}"
@@ -40,7 +40,7 @@ HAND_MODE="${HAND_MODE:-dex3}"
 BODY_MESH="${RESOURCE_ROOT}/ScaleBFM/scalebridge/data/robot/g1_29dof/meshes"
 case "${HAND_MODE}" in
   dex3)
-    DEX3_XML="${RESOURCE_ROOT}/SparseTrack/assets/g1_with_visual_dex3_hands.xml"
+    DEX3_XML="${RESOURCE_ROOT}/robots/g1_dex3/g1_with_visual_dex3_hands.xml"
     DEX3_MESH="${BODY_MESH}"
     TRACKING_HAND_DOF=14
     RENDER_HAND_DOF=14
@@ -61,7 +61,7 @@ case "${HAND_MODE}" in
     exit 2
     ;;
 esac
-DA3_PY="${DA3_PY:-${KODA_PYTHON:-${PYTHON:-python3}}}"
+VIEW_PY="${VIEW_PY:-${KODA_PYTHON:-${PYTHON:-python3}}}"
 DIFFUERASER_PY="${DIFFUERASER_PY:-${KODA_PYTHON:-${PYTHON:-python3}}}"
 ROBOT_PY="${ROBOT_PY:-${KODA_PYTHON:-${PYTHON:-python3}}}"
 RESIDENT_WORKERS="${SCRIPTS}/resident_gpu_workers.sh"
@@ -88,7 +88,7 @@ for required in \
   }
 done
 
-read -r CONFIG_TARGET_WIDTH CONFIG_TARGET_HEIGHT < <("${DA3_PY}" -c '
+read -r CONFIG_TARGET_WIDTH CONFIG_TARGET_HEIGHT < <("${VIEW_PY}" -c '
 import json, sys
 meta = json.load(open(sys.argv[1], encoding="utf-8"))
 print(int(meta["width"]), int(meta["height"]))
@@ -101,12 +101,12 @@ if [[ "${TARGET_WIDTH}" != "${CONFIG_TARGET_WIDTH}" || \
   exit 2
 fi
 
-AVAILABLE_SOURCE_COUNT="$("${DA3_PY}" -c '
+AVAILABLE_SOURCE_COUNT="$("${VIEW_PY}" -c '
 import h5py, sys
 with h5py.File(sys.argv[1], "r") as archive:
     print(int(archive["cam-pose/timestamps"].shape[0]))
 ' "${SESSION}/annotation.hdf5")"
-AVAILABLE_TARGET_COUNT="$("${DA3_PY}" -c '
+AVAILABLE_TARGET_COUNT="$("${VIEW_PY}" -c '
 import numpy as np, sys
 with np.load(sys.argv[1], allow_pickle=False) as archive:
     print(int(archive["joint_pos"].shape[0]))
@@ -132,7 +132,7 @@ if [[ -z "${MAX_TARGET_FRAMES:-}" ]]; then
   else
     # For a smoke prefix, retain exactly the measured 50 Hz samples covered by
     # the selected source interval. The rendering/mapping policy stays the same.
-    TARGET_COUNT="$("${DA3_PY}" -c '
+    TARGET_COUNT="$("${VIEW_PY}" -c '
 import h5py, numpy as np, sys
 source_path, target_path, source_count = sys.argv[1], sys.argv[2], int(sys.argv[3])
 with h5py.File(source_path, "r") as archive:
@@ -184,7 +184,7 @@ encode_composite_trim() {
   local out_mp4="${PROCESSED}/eraser/composite_trim.mp4"
   mkdir -p "${PROCESSED}/eraser"
   echo "[run] encoding composite_trim ${out_mp4}"
-  PYTHONPATH="${SCRIPTS}${PYTHONPATH:+:${PYTHONPATH}}" "${DA3_PY}" - "${rgb_dir}" "${out_mp4}" <<'PY'
+  PYTHONPATH="${SCRIPTS}${PYTHONPATH:+:${PYTHONPATH}}" "${VIEW_PY}" - "${rgb_dir}" "${out_mp4}" <<'PY'
 import sys
 from pathlib import Path
 
@@ -331,13 +331,13 @@ run_stage() {
 
 compose_tracking_render_kinematics() {
   mkdir -p "${DEX3_ROOT}"
-  "${DA3_PY}" "${SCRIPTS}/extract_hand_archive.py" \
+  "${VIEW_PY}" "${SCRIPTS}/extract_hand_archive.py" \
     --full-kinematics "${TARGET_KINEMATICS}" \
     --output "${HAND_FROM_TRACKING}" \
     --hand-dof "${TRACKING_HAND_DOF}" \
     --require-hand-qvel
-  PYTHONPATH="${SPARSE_SCRIPTS}" "${ROBOT_PY}" \
-    "${SPARSE_SCRIPTS}/compose_dex3_kinematics.py" \
+  PYTHONPATH="${KODA_SRC}${PYTHONPATH:+:${PYTHONPATH}}" "${ROBOT_PY}" \
+    -m koda.kinematics.compose \
     --body-kinematics "${TARGET_KINEMATICS}" \
     --hand-kinematics "${HAND_FROM_TRACKING}" \
     --output "${DEX3_KINEMATICS}" \
@@ -347,7 +347,7 @@ compose_tracking_render_kinematics() {
     --dex3-meshdir "${DEX3_MESH}" \
     --hand-mode "${HAND_MODE}" \
     --expected-hand-joints "${TRACKING_HAND_DOF}"
-  "${DA3_PY}" "${SCRIPTS}/verify_tracking_render_kinematics.py" \
+  "${VIEW_PY}" "${SCRIPTS}/verify_tracking_render_kinematics.py" \
     --tracking "${TARGET_KINEMATICS}" \
     --render "${DEX3_KINEMATICS}" \
     --hand-dof "${TRACKING_HAND_DOF}" \
@@ -390,7 +390,7 @@ publish_tree() {
 ensure_view_source_rgb() {
   local durable="${SOURCE_RGB_DIR:-}"
   local pack=(
-    "${DA3_PY}" "${SCRIPTS}/packed_source_rgb.py"
+    "${VIEW_PY}" "${SCRIPTS}/packed_source_rgb.py"
     --video "${SESSION}/rgb.mp4"
     --max-frames "${SOURCE_COUNT}"
   )
@@ -398,7 +398,7 @@ ensure_view_source_rgb() {
   if [[ -n "${durable}" ]]; then
     mkdir -p "${durable}"
     "${pack[@]}" --out-dir "${durable}"
-    "${DA3_PY}" "${SCRIPTS}/packed_source_rgb.py" \
+    "${VIEW_PY}" "${SCRIPTS}/packed_source_rgb.py" \
       --video "${SESSION}/rgb.mp4" \
       --out-dir "${VIEW_SOURCE_RGB}" \
       --reuse-from "${durable}" \
@@ -411,7 +411,7 @@ ensure_view_source_rgb() {
 run_adapter() {
   local durable="${SOURCE_ADAPTER_DIR:-}"
   local args=(
-    env CUDA_VISIBLE_DEVICES="${GPU}" "${DA3_PY}" "${SCRIPTS}/stera_episode_to_pipeline_inputs.py"
+    env CUDA_VISIBLE_DEVICES="${GPU}" "${VIEW_PY}" "${SCRIPTS}/stera_episode_to_pipeline_inputs.py"
     --episode "${SESSION}"
     --rgb-k "${SOURCE_RGB_K}"
     --source-rgb-dir "${VIEW_SOURCE_RGB}"
@@ -436,7 +436,7 @@ run_adapter() {
 run_human_masks() {
   local durable="${REUSE_HUMAN_MASKS_DIR:-}"
   local args=(
-    env CUDA_VISIBLE_DEVICES="${GPU}" "${DA3_PY}" "${SCRIPTS}/make_human_arm_masks.py"
+    env CUDA_VISIBLE_DEVICES="${GPU}" "${VIEW_PY}" "${SCRIPTS}/make_human_arm_masks.py"
     --rgb-mp4 "${SESSION}/rgb.mp4"
     --source-rgb-dir "${VIEW_SOURCE_RGB}"
     --annotation-h5 "${SESSION}/annotation.hdf5"
@@ -497,7 +497,7 @@ done
   reuse_stage tracking_render_kinematics compose_tracking_render_kinematics
 
   reuse_stage target_robot env MUJOCO_GL=egl CUDA_VISIBLE_DEVICES="${GPU}" \
-    PYTHONPATH="${SPARSE_SCRIPTS}" \
+    PYTHONPATH="${KODA_SRC}${PYTHONPATH:+:${PYTHONPATH}}" \
     "${ROBOT_PY}" "${SCRIPTS}/render_torso_robot_rgb_depth.py" \
     --kinematics-npz "${DEX3_KINEMATICS}" \
     --reference-npz "${TARGET_REFERENCE}" \
@@ -509,7 +509,7 @@ done
     --max-frames "${TARGET_COUNT}" \
     $([[ "${FORCE}" == "1" ]] && printf '%s' '--force' || true)
 
-  reuse_stage target_robot_camera_contract "${DA3_PY}" \
+  reuse_stage target_robot_camera_contract "${VIEW_PY}" \
     "${SCRIPTS}/verify_target_camera_contract.py" \
     --expected "${TARGET_CAMERA_CALIBRATION}" \
     --actual "${ROBOT}/camera_K.json" \
@@ -547,9 +547,8 @@ done
   ensure_resident_view_workers
 
   reuse_stage composite env CUDA_VISIBLE_DEVICES="${GPU}" \
-    DA3_WORKER_SOCK="${DA3_WORKER_SOCK:-}" \
     DIFFUERASER_WORKER_SOCK="${DIFFUERASER_WORKER_SOCK:-}" \
-    "${DA3_PY}" \
+    "${VIEW_PY}" \
     "${SCRIPTS}/composite_st_depth_overlay.py" \
     --final-rgb-dir "${WARP}/rgb_geometry" \
     --st-rgb-dir "${ROBOT}/rgb" \
@@ -559,8 +558,7 @@ done
     --robot-mask-dir "${ROBOT}/robot_id" \
     --robot-instance-json "${ROBOT}/robot_instance.json" \
     --timeline-manifest "${TIMELINE}" \
-    --camera-k-json "${ROBOT}/camera_K.json" \
-    --require-robot-id --paste-mode B --no-scale --neighbor-radius 3 \
+    --require-robot-id --paste-mode B --neighbor-radius 3 \
     --geometry-provenance-dir "${WARP}/provenance" \
     --rgb-out-dir "${PROCESSED}/rgb_geometry" \
     --dump-dir "${PROCESSED}/composite_debug" \
@@ -571,8 +569,7 @@ done
 
   reuse_stage diffueraser env CUDA_VISIBLE_DEVICES="${GPU}" \
     DIFFUERASER_WORKER_SOCK="${DIFFUERASER_WORKER_SOCK:-}" \
-    DA3_WORKER_SOCK="${DA3_WORKER_SOCK:-}" \
-    "${DA3_PY}" "${SCRIPTS}/run_remaining_hole_eraser.py" \
+    "${VIEW_PY}" "${SCRIPTS}/run_remaining_hole_eraser.py" \
     --composite-rgb-dir "${PROCESSED}/rgb_geometry" \
     --hole-dir "${PROCESSED}/hole" \
     --choice-dir "${PROCESSED}/paste_mask" \
@@ -589,7 +586,7 @@ done
     --diffueraser-python "${DIFFUERASER_PY}" \
     --diffueraser-script "${RESOURCE_ROOT}/DiffuEraser/run_diffueraser.py"
 
-  reuse_stage quality "${DA3_PY}" "${SCRIPTS}/quality_report.py" \
+  reuse_stage quality "${VIEW_PY}" "${SCRIPTS}/quality_report.py" \
     --frame-metrics "${WARP}/quality/frame_metrics.jsonl" \
     --geometry-gate "${WARP}/quality/geometry_gate.json" \
     --valid-dir "${PROCESSED}/valid" \
@@ -597,7 +594,7 @@ done
     --out "${ROOT}/quality/episode_quality.json" \
     --calibration-status complete
 
-  reuse_stage resample "${DA3_PY}" "${SCRIPTS}/resample_processed_30to50.py" \
+  reuse_stage resample "${VIEW_PY}" "${SCRIPTS}/resample_processed_30to50.py" \
     --processed-dir "${PROCESSED}" \
     --timeline-manifest "${TIMELINE}" \
     --output-dir "${FINAL}" \
@@ -608,7 +605,7 @@ done
     --skip-50hz-volumes \
     $([[ "${FORCE}" == "1" ]] && printf '%s' '--force' || true)
 
-  reuse_stage verify "${DA3_PY}" "${SCRIPTS}/verify_singleframe_outputs.py" \
+  reuse_stage verify "${VIEW_PY}" "${SCRIPTS}/verify_singleframe_outputs.py" \
     --processed-30hz "${PROCESSED}" \
     --final-50hz "${FINAL}" \
     --timeline "${TIMELINE}" \
@@ -636,7 +633,7 @@ run_stage tracking_render_kinematics compose_tracking_render_kinematics
 # three-point torso tracking result.  One camera instance and one K are shared
 # by robot rendering and novel-view warping.
 run_stage target_robot env MUJOCO_GL=egl CUDA_VISIBLE_DEVICES="${GPU}" \
-  PYTHONPATH="${SPARSE_SCRIPTS}" \
+  PYTHONPATH="${KODA_SRC}${PYTHONPATH:+:${PYTHONPATH}}" \
   "${ROBOT_PY}" \
   "${SCRIPTS}/render_torso_robot_rgb_depth.py" \
   --kinematics-npz "${DEX3_KINEMATICS}" \
@@ -649,14 +646,14 @@ run_stage target_robot env MUJOCO_GL=egl CUDA_VISIBLE_DEVICES="${GPU}" \
   --max-frames "${TARGET_COUNT}" \
   $([[ "${FORCE}" == "1" ]] && printf '%s' '--force' || true)
 
-run_stage target_robot_camera_contract "${DA3_PY}" \
+run_stage target_robot_camera_contract "${VIEW_PY}" \
   "${SCRIPTS}/verify_target_camera_contract.py" \
   --expected "${TARGET_CAMERA_CALIBRATION}" \
   --actual "${ROBOT}/camera_K.json" \
   --rgb-dir "${ROBOT}/rgb" --depth-dir "${ROBOT}/depth" \
   --robot-id-dir "${ROBOT}/robot_id"
 
-run_stage timeline "${DA3_PY}" "${SCRIPTS}/timeline_alignment.py" \
+run_stage timeline "${VIEW_PY}" "${SCRIPTS}/timeline_alignment.py" \
   --annotation-hdf5 "${SESSION}/annotation.hdf5" \
   --target-kinematics-npz "${ROBOT}/kinematics.npz" \
   --out "${TIMELINE}" \
@@ -666,7 +663,7 @@ run_stage timeline "${DA3_PY}" "${SCRIPTS}/timeline_alignment.py" \
   --expected-target-frames "${TARGET_COUNT}"
 
 warp_cmd=(
-  "${DA3_PY}" "${SCRIPTS}/viewport_gt_depth_warp.py"
+  "${VIEW_PY}" "${SCRIPTS}/viewport_gt_depth_warp.py"
   --video_file "${SESSION}/rgb.mp4"
   --source-rgb-dir "${VIEW_SOURCE_RGB}"
   --h5_file "${ADAPTER}/camera.h5"
@@ -700,7 +697,7 @@ if [[ "${FORCE}" == "1" || ! -f "$(stage_marker warp)" ]]; then
   elapsed="$(( $(date +%s) - start_s ))"
   echo "[run] stage warp elapsed_s=${elapsed}"
   if [[ "${warp_rc}" -ne 0 ]]; then
-    "${DA3_PY}" "${SCRIPTS}/write_diagnostic_passthrough.py" \
+    "${VIEW_PY}" "${SCRIPTS}/write_diagnostic_passthrough.py" \
       --video "${SESSION}/rgb.mp4" --out-dir "${ROOT}" --count "${SOURCE_COUNT}" \
       --reason "geometry_gate_or_warp_failed_rc_${warp_rc}"
     echo "[run] formal view-change stopped; diagnostic passthrough written" >&2
@@ -710,7 +707,7 @@ if [[ "${FORCE}" == "1" || ! -f "$(stage_marker warp)" ]]; then
 else
   echo "[run] skip warp (marker exists)"
 fi
-run_stage warp_camera_contract "${DA3_PY}" \
+run_stage warp_camera_contract "${VIEW_PY}" \
   "${SCRIPTS}/verify_target_camera_contract.py" \
   --expected "${TARGET_CAMERA_CALIBRATION}" \
   --actual "${ROBOT}/camera_K.json" \
@@ -724,9 +721,8 @@ prune_after_warp
 ensure_resident_view_workers
 
 run_stage composite env CUDA_VISIBLE_DEVICES="${GPU}" \
-  DA3_WORKER_SOCK="${DA3_WORKER_SOCK:-}" \
   DIFFUERASER_WORKER_SOCK="${DIFFUERASER_WORKER_SOCK:-}" \
-  "${DA3_PY}" "${SCRIPTS}/composite_st_depth_overlay.py" \
+  "${VIEW_PY}" "${SCRIPTS}/composite_st_depth_overlay.py" \
   --final-rgb-dir "${WARP}/rgb_geometry" \
   --st-rgb-dir "${ROBOT}/rgb" \
   --st-depth-dir "${ROBOT}/depth" \
@@ -735,16 +731,15 @@ run_stage composite env CUDA_VISIBLE_DEVICES="${GPU}" \
   --robot-mask-dir "${ROBOT}/robot_id" \
   --robot-instance-json "${ROBOT}/robot_instance.json" \
   --timeline-manifest "${TIMELINE}" \
-  --camera-k-json "${ROBOT}/camera_K.json" \
   --require-robot-id \
-  --paste-mode B --no-scale --neighbor-radius 3 \
+  --paste-mode B --neighbor-radius 3 \
   --geometry-provenance-dir "${WARP}/provenance" \
   --rgb-out-dir "${PROCESSED}/rgb_geometry" \
   --dump-dir "${PROCESSED}/composite_debug" \
   --fps 30 --device cuda
 prune_after_composite
 
-run_stage assemble "${DA3_PY}" "${SCRIPTS}/assemble_singleframe_bundle.py" \
+run_stage assemble "${VIEW_PY}" "${SCRIPTS}/assemble_singleframe_bundle.py" \
   --warp-dir "${WARP}" \
   --composite-debug-dir "${PROCESSED}/composite_debug" \
   --out-dir "${PROCESSED}" \
@@ -755,8 +750,7 @@ stop_after_if_requested composite
 
 run_stage diffueraser env CUDA_VISIBLE_DEVICES="${GPU}" \
   DIFFUERASER_WORKER_SOCK="${DIFFUERASER_WORKER_SOCK:-}" \
-  DA3_WORKER_SOCK="${DA3_WORKER_SOCK:-}" \
-  "${DA3_PY}" "${SCRIPTS}/run_remaining_hole_eraser.py" \
+  "${VIEW_PY}" "${SCRIPTS}/run_remaining_hole_eraser.py" \
   --composite-rgb-dir "${PROCESSED}/rgb_geometry" \
   --hole-dir "${PROCESSED}/hole" \
   --choice-dir "${PROCESSED}/paste_mask" \
@@ -773,7 +767,7 @@ run_stage diffueraser env CUDA_VISIBLE_DEVICES="${GPU}" \
   --diffueraser-script "${RESOURCE_ROOT}/DiffuEraser/run_diffueraser.py"
 prune_after_diffueraser
 
-run_stage quality "${DA3_PY}" "${SCRIPTS}/quality_report.py" \
+run_stage quality "${VIEW_PY}" "${SCRIPTS}/quality_report.py" \
   --frame-metrics "${WARP}/quality/frame_metrics.jsonl" \
   --geometry-gate "${WARP}/quality/geometry_gate.json" \
   --valid-dir "${PROCESSED}/valid" \
@@ -781,7 +775,7 @@ run_stage quality "${DA3_PY}" "${SCRIPTS}/quality_report.py" \
   --out "${ROOT}/quality/episode_quality.json" \
   --calibration-status complete
 
-run_stage resample "${DA3_PY}" "${SCRIPTS}/resample_processed_30to50.py" \
+run_stage resample "${VIEW_PY}" "${SCRIPTS}/resample_processed_30to50.py" \
   --processed-dir "${PROCESSED}" \
   --timeline-manifest "${TIMELINE}" \
   --output-dir "${FINAL}" \
@@ -793,7 +787,7 @@ run_stage resample "${DA3_PY}" "${SCRIPTS}/resample_processed_30to50.py" \
   $([[ "${FORCE}" == "1" ]] && printf '%s' '--force' || true)
 prune_after_resample
 
-run_stage verify "${DA3_PY}" "${SCRIPTS}/verify_singleframe_outputs.py" \
+run_stage verify "${VIEW_PY}" "${SCRIPTS}/verify_singleframe_outputs.py" \
   --processed-30hz "${PROCESSED}" \
   --final-50hz "${FINAL}" \
   --timeline "${TIMELINE}" \
@@ -806,9 +800,8 @@ run_stage verify "${DA3_PY}" "${SCRIPTS}/verify_singleframe_outputs.py" \
   --warp-meta "${WARP}/warp_meta.json" \
   --out "${ROOT}/quality/structural_acceptance.json"
 
-# Publish the synchronized tracking archive next to the final RGB video. The
-# GR00T/SONIC exporter consumes this stable final_50hz contract and keeps the
-# body-plus-hand state, timestamps, contacts, and provenance from tracking.
+# Publish the synchronized body-plus-hand tracking archive next to the final
+# RGB video, preserving tracking timestamps, contacts, and provenance.
 cp --reflink=auto "${TARGET_KINEMATICS}" "${FINAL}/kinematics.npz"
 
 echo "[run] completed single-frame 30->50 view change"

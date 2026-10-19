@@ -32,16 +32,15 @@ from scipy.spatial.transform import Rotation, Slerp
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parents[1]
-SPARSE_SCRIPTS = PROJECT_ROOT / "resources/SparseTrack/scripts"
-sys.path.insert(0, str(SPARSE_SCRIPTS))
+sys.path.insert(0, str(PROJECT_ROOT / "src"))
 EXPERIMENT_VECTOR_CONFIG = SCRIPT_DIR / "configs" / "unitree_dex3_vector_experiment.yml"
 
-from compare_dex3_retarget_methods import (  # noqa: E402
+from koda.retargeting.evaluation import (  # noqa: E402
     _build_fixed_base_fk,
     _evaluate_method,
     _human_wrist_local_tips,
 )
-from egodex_to_dex3_hand_qpos import (  # noqa: E402
+from koda.retargeting.dex3 import (  # noqa: E402
     HAND_JOINT_NAMES,
     _load_session_keypoints,
     _interpolate_rotation_samples,

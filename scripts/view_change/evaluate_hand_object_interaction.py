@@ -36,25 +36,21 @@ from sklearn.cluster import DBSCAN
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 WORKSPACE = SCRIPT_DIR.parents[1]
-# SparseTrack is vendored through the project resources link.  The old
-# sibling-path assumption only worked in the original checkout layout and
-# made contact preprocessing fail for every newly discovered session.
-SPARSE_SCRIPTS = WORKSPACE / "resources" / "SparseTrack" / "scripts"
 sys.path.insert(0, str(SCRIPT_DIR))
-sys.path.insert(0, str(SPARSE_SCRIPTS))
+sys.path.insert(0, str(WORKSPACE / "src"))
 
 from cup_eval_fast import (  # noqa: E402
     evaluate_packed_configuration,
     geoms_to_wrist_local,
     pack_local_samples,
 )
-from dex3_kinematics_utils import (  # noqa: E402
+from koda.kinematics.dex3 import (  # noqa: E402
     DEFAULT_G1_MESHDIR,
     evaluate_mimic_rule,
     joint_mimic_rules,
     load_dex3_model,
 )
-from egodex_to_dex3_hand_qpos import HAND_JOINT_NAMES  # noqa: E402
+from koda.retargeting.dex3 import HAND_JOINT_NAMES  # noqa: E402
 from frame_volume import as_mask, open_volume  # noqa: E402
 
 

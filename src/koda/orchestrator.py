@@ -40,9 +40,6 @@ def _pythonpath(root: Path) -> str:
     entries = [
         root / "src",
         root / "src/koda/vendor/stera_sdk",
-        root / "src/koda/vendor/sil_tts/sil_tts",
-        root / "src/koda/vendor/sil_tts/sil_trackers",
-        root / "src/koda/vendor/sil_tts/sil_planners",
         root / "src/koda/vendor/hydrax",
     ]
     return os.pathsep.join(str(p) for p in entries if p.exists())
@@ -130,30 +127,10 @@ def view_change(ctx: PipelineContext, converted: Path, tracking: Path) -> Path:
     if not result.exists(): raise RuntimeError(f"view-change completed without {result}")
     return result
 
-def export_groot(ctx: PipelineContext, view_root: Path) -> Path:
-    groot_root = ctx.output_root / "groot"; clips = ctx.output_root / "clips"
-    encoder = assets_root() / "models/sonic/low_latency/model_encoder.onnx"
-    command_encode = [sys.executable, "-m", "sil_tts.run_sil", "encode-kinematics-tokens", "--source-root", str(view_root.parent), "--output-root", str(clips), "--encoder", str(encoder), "--gpus", ctx.gpu]
-    _run(ctx, "encode_tokens", command_encode)
-    command_export = [sys.executable, "-m", "sil_tts.run_sil", "export-groot", "--source-root", str(view_root.parent), "--clips-root", str(clips), "--output", str(groot_root), "--task", str(ctx.config.get("task", "koda_demo"))]
-    _run(ctx, "export_groot", command_export)
-    if not (groot_root / "meta/info.json").is_file(): raise RuntimeError(f"GR00T export missing {groot_root / 'meta/info.json'}")
-    return groot_root
-
-def finetune(ctx: PipelineContext, dataset: Path) -> Path:
-    output = ctx.output_root / "finetune"
-    command_text = os.environ.get("KODA_FINETUNE_COMMAND") or ctx.config.get("finetune", {}).get("command")
-    if not command_text: raise RuntimeError("GR00T finetune needs KODA_FINETUNE_COMMAND or finetune.command in config; the vendored trainer requires IsaacLab/IsaacSim runtime")
-    env_extra = {"KODA_DATASET": str(dataset), "KODA_OUTPUT": str(output)}
-    _run(ctx, "finetune", ["bash", "-lc", command_text], env_extra=env_extra)
-    return output
-
 def run_pipeline(ctx: PipelineContext) -> dict[str, str]:
     ctx.output_root.mkdir(parents=True, exist_ok=True)
     converted = convert(ctx); result = {"converted": str(converted)}
     tracking = track(ctx, converted); result["tracking"] = str(tracking)
     view = view_change(ctx, converted, tracking); result["view_change"] = str(view)
-    groot = export_groot(ctx, view); result["groot"] = str(groot)
-    if ctx.config.get("stages", {}).get("finetune", False): result["finetune"] = str(finetune(ctx, groot))
     (ctx.output_root / "pipeline_result.json").write_text(json.dumps(result, indent=2) + "\n")
     return result

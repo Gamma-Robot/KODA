@@ -1,8 +1,0 @@
-ref: experiments/cross_tracker_low_budget.base.yaml
-
-name: sonic_walk_full
-tracker:
-  ref: trackers/sonic_release_g1.yaml
-target:
-  motion_id: walk
-  clip_duration_seconds: 246.62

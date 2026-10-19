@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""GT-depth novel-view warp to SparseTrack camera (no MoGe/DA3).
+"""Source RGB-D depth warp to the target robot camera.
 
 Emits four aligned maps per frame under --output-dir:
   rgb/%06d.png
