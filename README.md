@@ -2,6 +2,9 @@
 
 **Kinematics–Observation Data Alignment for Humanoid Learning from Human Egocentric Demonstration**
 
+[![Project Page](https://img.shields.io/badge/Project-Page-4285F4?style=for-the-badge&logo=googlechrome&logoColor=white)](https://koda-humanoid.github.io/koda)
+[![arXiv](https://img.shields.io/badge/arXiv-2610.21152-B31B1B?style=for-the-badge&logo=arxiv&logoColor=white)](https://arxiv.org/abs/2610.21152v1)
+
 KODA is a data conversion framework for turning human egocentric demonstrations into reusable, controller-specific whole-body training data for humanoid loco-manipulation.
 
 The research framework aligns human observations, head and hand motion cues, robot states, compatible actions, and task instructions on a shared control clock. It targets simulation-feasible whole-body motion, motion-aligned robot onboard views, and controller-specific state–action records for vision–language–action (VLA) policies.
