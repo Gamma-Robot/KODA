@@ -74,7 +74,7 @@ The public portions of the internal KODA pipeline are included in this repositor
 | 🧩 **M1** | **Core conversion pipeline** | RGB-D/MCAP conversion, hand pose estimation, hand retargeting, contact-aware refinement, SCO tracking, and arm refinement | ✅ Done |
 | 🎥 **M2** | **Onboard view generation** | Arm segmentation, point-cloud reprojection, robot rendering, depth compositing, and inpainting | ✅ Done |
 | 🎛️ **M3** | **Command generation & alignment** | Controller action labels, motion-token encoding, and controller-aligned dataset export | 🔜 Planned |
-| 🗃️ **M4** | **Data release** | Reproducible data-processing tools and one public example MCAP through `TeleEmbodied/koda-assets` | 🚧 Partial |
+| 🗃️ **M4** | **Data release** | Reproducible data-processing tools, two public example MCAPs, and a fine-tuned ScaleBFM tracking checkpoint through `TeleEmbodied/koda-assets` | 🚧 Partial |
 | 🤖 **M5** | **Training & model details** | Controller-specific whole-body VLA training configs and model details | 🔜 Planned |
 
 > **Status legend:** ✅ Done · 🚧 Partial or in progress · 🔜 Planned
@@ -102,7 +102,7 @@ All paths are relative to this checkout. `KODA_HOME`, `KODA_ASSETS`, and `KODA_C
 
 ## Download the example and public checkpoints
 
-The only KODA-owned input is the example MCAP in the [`TeleEmbodied/koda-assets`](https://huggingface.co/datasets/TeleEmbodied/koda-assets) dataset. For a zero-token setup, set that Hugging Face dataset to **Public**. A private dataset requires a user access token with read permission:
+Two example MCAP recordings and a fine-tuned ScaleBFM tracking checkpoint are available in the public [`TeleEmbodied/koda-assets`](https://huggingface.co/datasets/TeleEmbodied/koda-assets) dataset. These files can be downloaded without a Hugging Face token. To download and verify the default example:
 
 ```bash
 uv run koda assets download --profile smoke
@@ -128,6 +128,24 @@ The manual assets are:
 3. Download the three [ProPainter v0.1.0 release](https://github.com/sczhou/ProPainter/releases/tag/v0.1.0) files (`ProPainter.pth`, `raft-things.pth`, and `recurrent_flow_completion.pth`) into `assets/models/diffueraser/propainter`.
 
 All other model sources, revisions, destination paths, and required markers are recorded in the manifest. You may set `KODA_HAWOR_DIR` or `KODA_SCALEBFM_CHECKPOINT` to another user-owned checkout or checkpoint; no default points outside the repository.
+
+### Fine-tuned ScaleBFM checkpoint
+
+The full asset profile downloads the upstream ScaleBFM checkpoint. To use KODA's fine-tuned G1 torso/UMI3 checkpoint, download [`model_24600.pt`](https://huggingface.co/datasets/TeleEmbodied/koda-assets/resolve/main/models/scalebfm/model_24600.pt?download=true) and select it before running the pipeline:
+
+```bash
+uv run hf download TeleEmbodied/koda-assets models/scalebfm/model_24600.pt \
+  --repo-type dataset \
+  --local-dir assets
+
+export KODA_SCALEBFM_CHECKPOINT=assets/models/scalebfm/model_24600.pt
+```
+
+Run the pipeline below in the same shell. The checkpoint file is 72,856,655 bytes; verify its SHA-256 on Linux with:
+
+```bash
+echo "2d40b7326c3435c9aaf01f46e1507f747e7a7371bfa504201aaea12c539f813d  assets/models/scalebfm/model_24600.pt" | sha256sum -c -
+```
 
 ## Run the kinematics and video pipeline
 
