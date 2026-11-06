@@ -172,12 +172,31 @@ def read_priori(priori, fps, n_total_frames, img_size, remove=True):
     return prioris
 
 def read_video(validation_image, video_length, nframes, max_img_size):
-    vframes, aframes, info = torchvision.io.read_video(filename=validation_image, pts_unit='sec', end_pts=video_length) # RGB
-    fps = info['video_fps']
+    try:
+        vframes, aframes, info = torchvision.io.read_video(
+            filename=validation_image, pts_unit="sec", end_pts=video_length
+        )
+        fps = info["video_fps"]
+        frames = list(vframes.numpy())
+    except TypeError:
+        cap = cv2.VideoCapture(validation_image)
+        if not cap.isOpened():
+            raise RuntimeError(f"failed to open video: {validation_image}") from None
+        fps = float(cap.get(cv2.CAP_PROP_FPS) or 30.0)
+        n_total_cap = max(1, int(round(float(video_length) * fps)))
+        frames = []
+        while len(frames) < n_total_cap:
+            ok, frame = cap.read()
+            if not ok:
+                break
+            frames.append(frame[..., ::-1])
+        cap.release()
+        if not frames:
+            raise RuntimeError(f"no frames read from {validation_image}")
     n_total_frames = int(video_length * fps)
-    n_clip = int(np.ceil(n_total_frames/nframes))
+    n_clip = int(np.ceil(n_total_frames / nframes))
 
-    frames = list(vframes.numpy())[:n_total_frames]
+    frames = frames[:n_total_frames]
     frames = [Image.fromarray(f) for f in frames]
     max_size = max(frames[0].size)
     if(max_size<256):
