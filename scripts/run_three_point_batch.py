@@ -1671,6 +1671,19 @@ class JaxMpcWorkerHandle:
     log_path: Path
 
 
+_AF_UNIX_SOCK_PATH_MAX = 107
+
+
+def jax_mpc_worker_socket_path(work_root: Path, gpu: str) -> Path:
+    sock = work_root / f"jax_mpc_gpu_{gpu}.sock"
+    if len(str(sock)) <= _AF_UNIX_SOCK_PATH_MAX:
+        return sock
+    key = hashlib.sha256(str(work_root.expanduser().resolve()).encode()).hexdigest()[
+        :16
+    ]
+    return Path(tempfile.gettempdir()) / f"koda-jmx-{key}-gpu{gpu}.sock"
+
+
 def wait_for_jax_mpc_worker(
     handle: JaxMpcWorkerHandle,
     *,
@@ -1728,7 +1741,7 @@ def start_jax_mpc_workers(
     handles: list[JaxMpcWorkerHandle] = []
     try:
         for gpu in gpus:
-            sock = work_root / f"jax_mpc_gpu_{gpu}.sock"
+            sock = jax_mpc_worker_socket_path(work_root, gpu)
             log_path = work_root / f"jax_mpc_gpu_{gpu}.log"
             if sock.exists() or sock.is_socket():
                 sock.unlink()

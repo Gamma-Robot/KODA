@@ -707,13 +707,14 @@ def main() -> None:
     # Use the camera clock for RGB when the MP4 lacks embedded per-frame
     # timestamps.  A strict run may accept this only with an explicit
     # frame-lock declaration validated against the synchronized HDF5 streams.
+    lock_n = int(n_stream)
     frame_lock_check = _frame_locked_rgb_check(
-        rgb_count=rgb_count,
-        camera_count=n_cam_all,
-        depth_count=n_depth_all,
+        rgb_count=lock_n,
+        camera_count=lock_n,
+        depth_count=lock_n,
         rgb_timestamps=rgb_ts_all,
-        camera_timestamps=cam_ts_all,
-        depth_timestamps=depth_ts_all,
+        camera_timestamps=cam_ts_all[:lock_n],
+        depth_timestamps=depth_ts_all[:lock_n],
     )
     rgb_frame_lock_declared = bool(args.rgb_frame_locked_to_camera_pose)
     if rgb_frame_lock_declared and not frame_lock_check["pass"]:

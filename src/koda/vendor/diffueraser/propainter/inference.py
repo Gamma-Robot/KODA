@@ -46,13 +46,36 @@ def resize_frames(frames, size=None):
     return frames, process_size, out_size
 
 #  read frames from video
+def _read_video_frames(frame_root, video_length):
+    try:
+        vframes, _aframes, info = torchvision.io.read_video(
+            filename=frame_root, pts_unit="sec", end_pts=video_length
+        )
+        frames = [Image.fromarray(f) for f in vframes.numpy()]
+        fps = info["video_fps"]
+    except TypeError:
+        # PyAV/torchvision ABI mismatch (e.g. av.open missing metadata_errors).
+        cap = cv2.VideoCapture(frame_root)
+        if not cap.isOpened():
+            raise RuntimeError(f"failed to open video: {frame_root}") from None
+        fps = float(cap.get(cv2.CAP_PROP_FPS) or 30.0)
+        max_frames = max(1, int(round(float(video_length) * fps)))
+        frames = []
+        while len(frames) < max_frames:
+            ok, frame = cap.read()
+            if not ok:
+                break
+            frames.append(Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)))
+        cap.release()
+        if not frames:
+            raise RuntimeError(f"no frames read from {frame_root}")
+    return frames, fps
+
+
 def read_frame_from_videos(frame_root, video_length):
     if frame_root.endswith(('mp4', 'mov', 'avi', 'MP4', 'MOV', 'AVI')): # input video path
         video_name = os.path.basename(frame_root)[:-4]
-        vframes, aframes, info = torchvision.io.read_video(filename=frame_root, pts_unit='sec', end_pts=video_length) # RGB
-        frames = list(vframes.numpy())
-        frames = [Image.fromarray(f) for f in frames]
-        fps = info['video_fps']
+        frames, fps = _read_video_frames(frame_root, video_length)
         nframes = len(frames)
     else:
         video_name = os.path.basename(frame_root)
